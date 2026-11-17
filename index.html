@@ -176,7 +176,7 @@
 <!-- ======================= HOST: FINAL ======================= -->
 <div id="final" class="screen hidden">
   <h1>Final scores</h1>
-  <p>Score = (cash + car value) ÷ year total. Highest percentage wins; ties go to fewer strikes.</p>
+  <p>Score = (cash + car value − any unpaid payday loan) ÷ year total. Highest percentage wins; ties go to fewer strikes.</p>
   <div id="finalTable"></div>
   <div class="row">
     <button class="btn primary" id="revealDollarsBtn">Reveal raw dollars</button>
@@ -236,7 +236,8 @@ const perRound = g => {
 };
 const r4Fail = g => (g.mode === "BHPH" ? 4 : 3);
 const carValue = g => (isCar(g) ? TRANSPORT[g.mode].value : 0);
-const score = g => (g.cash + carValue(g)) / yearTotal(card(g));
+const netWorth = g => g.cash + carValue(g) - (g.debt || 0);     // an unpaid payday loan counts against you
+const score = g => netWorth(g) / yearTotal(card(g));
 function note(g, text, kind) { g.notes.push({ text, kind: kind || "" }); }
 function strike(g, why) { g.strikes += 1; note(g, "Strike: " + why, "bad"); }
 function killCar(g, why) {
@@ -776,14 +777,14 @@ function renderTimer() {
 function renderFinal() {
   const gs = groupsInPlay().slice().sort((a, b) => (b.out ? -1 : 0) - (a.out ? -1 : 0) || score(b) - score(a) || a.strikes - b.strikes);
   const winner = gs.find(g => !g.out);
-  let h = `<table class="rank"><tr><th>#</th><th>Group</th><th>Score</th><th>Strikes</th><th class="${S.revealDollars ? "" : "hidden"}">Cash + car value</th><th class="${S.revealDollars ? "" : "hidden"}">Started the year with</th></tr>`;
+  let h = `<table class="rank"><tr><th>#</th><th>Group</th><th>Score</th><th>Strikes</th><th class="${S.revealDollars ? "" : "hidden"}">Cash + car value − debt</th><th class="${S.revealDollars ? "" : "hidden"}">Started the year with</th></tr>`;
   gs.forEach((g, i) => {
     h += `<tr class="${g === winner ? "winner" : ""} ${g.out ? "out" : ""}">
       <td>${g.out ? "–" : i + 1}</td>
       <td><div class="gname">${esc(g.name)} <span data-phone="${g.id}"></span></div><div class="student">${g.card}: ${esc(card(g).student)}${g.out ? " · OUT: " + esc(g.outWhy) : ""}</div></td>
       <td class="pct">${g.out ? "OUT" : Math.round(score(g) * 100) + "%"}</td>
       <td class="strikes">${[0, 1, 2].map(k => `<span class="${k < g.strikes ? "on" : ""}"></span>`).join("")}</td>
-      <td class="${S.revealDollars ? "" : "hidden"} cash">${fmt(g.cash + carValue(g))}</td>
+      <td class="${S.revealDollars ? "" : "hidden"} cash">${fmt(netWorth(g))}</td>
       <td class="${S.revealDollars ? "" : "hidden"}">${fmt(yearTotal(card(g)))}</td></tr>`;
   });
   $("finalTable").innerHTML = h + "</table>";
@@ -803,7 +804,7 @@ let MODE = new URLSearchParams(location.search).has("join") ? "phone" : "host";
 const DEFAULT_RELAYS = [
   "wss://broker.emqx.io:8084/mqtt",
   "wss://broker.hivemq.com:8884/mqtt",
-  "wss://mqtt.eclipseprojects.io:443/mqtt",
+  "wss://test.mosquitto.org:8081/mqtt",
 ];
 const RELAYS = (() => { const r = new URLSearchParams(location.search).getAll("relay"); return r.length ? r : DEFAULT_RELAYS; })();
 const TOPIC = code => "caryear-game-v2/" + code.toUpperCase();
@@ -939,7 +940,8 @@ function onPhoneMsg(m) {
 const voteKey = () => S.round + ":" + S.step;
 function phoneView(g) {
   const st = curStep();
-  const v = { gid: g.id, name: g.name, student: g.card ? card(g).student : "", cash: g.cash, strikes: g.strikes,
+  const v = { gid: g.id, name: g.name, student: g.card ? card(g).student : "",
+    cash: S.screen === "setup" ? (g.card ? CARDS[g.card].savings : 0) : g.cash, strikes: g.strikes,
     out: g.out, outWhy: g.outWhy, screen: S.screen, round: S.round,
     title: S.round ? ROUND_INFO[S.round].title : "",
     transport: g.mode ? TRANSPORT[g.mode].label : "", phase: S.phase, debt: g.debt };
