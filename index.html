@@ -192,7 +192,7 @@
 const CARDS = {
   A: { student: "Avery", blurb: "Parents cover everything; doesn't need a job", savings: 6000, family: 1800, job: 0 },
   B: { student: "Blake", blurb: "Parents help out; works at the campus library", savings: 3000, family: 700, job: 900 },
-  C: { student: "Casey", blurb: "A little family help; works at a café downtown", savings: 1500, family: 300, job: 1000 },
+  C: { student: "Casey", blurb: "A little family help; works at a café downtown", savings: 2800, family: 300, job: 1000 },
   D: { student: "Drew", blurb: "On their own; works at a warehouse on the edge of town", savings: 400, family: 0, job: 1000 },
   E: { student: "Emerson", blurb: "On their own; works at a grocery store across town", savings: 100, family: 0, job: 900 },
 };
@@ -230,6 +230,7 @@ const perRound = g => {
   if (isCar(g)) c += g.bump;
   return c + g.rideshare + g.deadLoan;
 };
+const r4Fail = g => (g.mode === "BHPH" ? 4 : 3);
 const carValue = g => (isCar(g) ? TRANSPORT[g.mode].value : 0);
 const score = g => (g.cash + carValue(g)) / yearTotal(card(g));
 function note(g, text, kind) { g.notes.push({ text, kind: kind || "" }); }
@@ -251,20 +252,35 @@ function killCar(g, why) {
      vote  – 30-second think timer, then groups choose; then apply
      end   – end-of-round checks (strikes, going broke)
    ===================================================================== */
+// "Daily life" roll at the start of every round:
+//  bus riders with a job:    1–3 missed shifts (half pay + strike), 4 half pay, 5–6 fine
+//  bus riders without a job: 1–2 missed class (strike)
+//  buy-here-pay-here clunker: 1–2 breakdown day (strike)
+function lifeRollKind(g) {
+  if (isBus(g) && hasJob(g) && !g.rideshare) return "shift";
+  if (isBus(g) && !hasJob(g)) return "class";
+  if (g.mode === "BHPH") return "clunker";
+  return null;
+}
 function paydayRoll() {
-  return { type: "roll", id: "shift", label: "Bus riders roll for missed shifts (1–4: half pay; a 1 is also a strike)",
-    who: g => isBus(g) && hasJob(g) && !g.rideshare, bad: n => n <= 4 };
+  return { type: "roll", id: "shift",
+    label: "Daily-life roll. Bus + job: 1–3 missed shifts (half pay + strike), 4 half pay. Bus, no job: 1–2 missed class (strike). Buy-here-pay-here: 1–2 breakdown (strike)",
+    who: g => !!lifeRollKind(g),
+    bad: (n, g) => { const k = lifeRollKind(g); return k === "shift" ? n <= 4 : n <= 2; } };
 }
 function payday() {
   return { type: "auto", label: "Payday: family money + job pay (and payday-loan repayment)", run: g => {
     const c = card(g);
     let pay = c.job;
-    if (g.roll.shift) {
-      if (g.roll.shift <= 4) pay = Math.round(pay / 2);
-      if (g.roll.shift === 1) strike(g, "the bus made you miss a whole shift");
+    const kind = lifeRollKind(g), r = g.roll.shift;
+    if (r && kind === "shift") {
+      if (r <= 4) pay = Math.round(pay / 2);
+      if (r <= 3) strike(g, "the bus made you miss shifts");
     }
+    if (r && kind === "class" && r <= 2) strike(g, "the bus made you miss class");
+    if (r && kind === "clunker" && r <= 2) strike(g, "your old car broke down and you missed work");
     g.cash += c.family + pay;
-    note(g, "+" + fmt(c.family + pay) + " income" + (g.roll.shift && g.roll.shift <= 4 ? " (missed shifts: half pay)" : ""), "good");
+    note(g, "+" + fmt(c.family + pay) + " income" + (kind === "shift" && r <= 4 ? " (missed shifts: half pay)" : ""), "good");
     if (g.debt) { g.cash -= g.debt; note(g, "Repaid payday loan: −" + fmt(g.debt), "bad"); g.debt = 0; }
   }};
 }
@@ -309,12 +325,12 @@ const ROUNDS = {
       options: g => isCar(g)
         ? [ { key: "pay", label: "Pay the extra $100 for gas" },
             { key: "carpool", label: "Carpool for $0 (roll: 1–2 the carpool bails → strike)" } ]
-        : [ { key: "ride", label: "Pay $60 for a rideshare", disabled: g.cash < 60, why: "not enough cash" },
+        : [ { key: "ride", label: "Pay $80 for a rideshare", disabled: g.cash < 80, why: "not enough cash" },
             { key: "miss", label: "Miss the midterm → strike" } ],
       apply: (g, k) => {
         if (k === "pay") { g.cash -= 100; note(g, "Gas spike −$100"); }
         if (k === "carpool") note(g, "Carpooling (rolling next)");
-        if (k === "ride") { g.cash -= 60; note(g, "Rideshare to the midterm −$60"); }
+        if (k === "ride") { g.cash -= 80; note(g, "Rideshare to the midterm −$80"); }
         if (k === "miss") strike(g, "missed the midterm");
       } },
     { type: "roll", id: "carpool", label: "Carpoolers roll: on 1–2 the carpool bails",
@@ -345,23 +361,23 @@ const ROUNDS = {
   ],
   4: [
     paydayRoll(), payday(), bills(),
-    { type: "roll", id: "r4", label: "Everyone rolls. Used cars: 1–3 transmission failing. New/EV: 1 = $250 deductible. Bus: 1–3 miss a shift",
+    { type: "roll", id: "r4", label: "Everyone rolls. Used car: 1–3 transmission failing (buy-here-pay-here: 1–4). New/EV: 1 = $250 deductible. Bus: 1–3 miss a shift",
       who: active,
-      bad: (n, g) => (g.mode === "NEW" || g.mode === "EV") ? n === 1 : n <= 3,
+      bad: (n, g) => (g.mode === "NEW" || g.mode === "EV") ? n === 1 : n <= r4Fail(g),
       after: (g, n) => { if ((g.mode === "NEW" || g.mode === "EV") && n === 1) { g.cash -= 250; note(g, "Warranty deductible −$250", "bad"); } } },
     { type: "vote", id: "r4v", question: "Used cars: the transmission is failing. Bus riders: the cut schedule made you miss a shift.",
-      who: g => (g.roll.r4 <= 3) && (g.mode === "USED" || g.mode === "BHPH" || isBus(g)),
+      who: g => (g.roll.r4 <= r4Fail(g)) && (g.mode === "USED" || g.mode === "BHPH" || isBus(g)),
       options: g => isBus(g)
-        ? [ { key: "ride", label: "Pay $150 for rides", disabled: g.cash < 150, why: "not enough cash" },
+        ? [ { key: "ride", label: "Pay $200 for rides", disabled: g.cash < 200, why: "not enough cash" },
             { key: "miss", label: "Miss the shift → strike" } ]
-        : [ { key: "fix", label: "Full repair: $1,200", disabled: g.cash < 1200, why: "can't afford" },
-            { key: "patch", label: "Cheap patch: $500 (roll again in Round 6)", disabled: g.cash < 500, why: "can't afford" },
+        : [ { key: "fix", label: "Full repair: $1,200 (car in the shop → strike)", disabled: g.cash < 1200, why: "can't afford" },
+            { key: "patch", label: "Cheap patch: $500 (car in the shop → strike; roll again in Round 6)", disabled: g.cash < 500, why: "can't afford" },
             { key: "dead", label: "Let it die → strike, bus from next round" } ],
       apply: (g, k) => {
-        if (k === "ride") { g.cash -= 150; note(g, "Rides −$150"); }
+        if (k === "ride") { g.cash -= 200; note(g, "Rides −$200"); }
         if (k === "miss") strike(g, "missed a shift (summer service cuts)");
-        if (k === "fix") { g.cash -= 1200; note(g, "Transmission repair −$1,200", "bad"); }
-        if (k === "patch") { g.cash -= 500; g.patched = true; note(g, "Cheap patch −$500", "bad"); }
+        if (k === "fix") { g.cash -= 1200; note(g, "Transmission repair −$1,200", "bad"); strike(g, "car in the shop; missed work"); }
+        if (k === "patch") { g.cash -= 500; g.patched = true; note(g, "Cheap patch −$500", "bad"); strike(g, "car in the shop; missed work"); }
         if (k === "dead") killCar(g, "your car died");
       } },
     end,
@@ -383,7 +399,7 @@ const ROUNDS = {
       } },
     { type: "roll", id: "r5crash", label: "Car owners roll: on 1–2 you cause a fender bender",
       who: g => isCar(g), bad: n => n <= 2,
-      after: (g, n) => { if (n <= 2) { g.bump = 100; if (g.insurance === "full") { g.cash -= 500; note(g, "Fender bender: −$500 deductible, insurance +$100/round", "bad"); } else note(g, "Fender bender with minimum insurance!", "bad"); } } },
+      after: (g, n) => { if (n <= 2) { g.bump = 100; strike(g, "dealing with the crash; missed work"); if (g.insurance === "full") { g.cash -= 500; note(g, "Fender bender: −$500 deductible, insurance +$100/round", "bad"); } else note(g, "Fender bender with minimum insurance!", "bad"); } } },
     { type: "vote", id: "r5min", question: "Fender bender on minimum insurance: pay for the damage or lose the car?",
       who: g => isCar(g) && g.roll.r5crash <= 2 && g.insurance === "min",
       options: g => [
@@ -407,12 +423,12 @@ const ROUNDS = {
     { type: "vote", id: "r6v", question: "Patched cars: the transmission failed for good. Bus riders: the snowstorm canceled the buses.",
       who: g => g.roll.r6 <= 3 && ((isCar(g) && g.patched) || isBus(g)),
       options: g => isBus(g)
-        ? [ { key: "ride", label: "Pay $120 for rides", disabled: g.cash < 120, why: "not enough cash" },
+        ? [ { key: "ride", label: "Pay $150 for rides", disabled: g.cash < 150, why: "not enough cash" },
             { key: "miss", label: "Miss work/class → strike" } ]
         : [ { key: "fix", label: "Pay $1,200 to fix it", disabled: g.cash < 1200, why: "can't afford" },
             { key: "dead", label: "Let it die → strike" } ],
       apply: (g, k) => {
-        if (k === "ride") { g.cash -= 120; note(g, "Snow day rides −$120"); }
+        if (k === "ride") { g.cash -= 150; note(g, "Snow day rides −$150"); }
         if (k === "miss") strike(g, "snowstorm");
         if (k === "fix") { g.cash -= 1200; g.patched = false; note(g, "Transmission replaced −$1,200", "bad"); }
         if (k === "dead") killCar(g, "the transmission failed for good");
@@ -634,10 +650,11 @@ function renderSetup() {
 }
 function joinHelpHTML() {
   const url = joinURL();
-  const net = peerStatus === "ready";
+  const n = netSummary();
   let s = `Each group opens <b>${esc(url)}</b> on one phone or laptop and enters code <b style="color:var(--amber);font-size:22px;letter-spacing:.12em">${S.code}</b>.`;
-  if (location.protocol === "file:") s += `<br><br><span style="color:var(--red)">This file is open from your computer, so phones can't reach it. To use phone voting, put this file online (for example GitHub Pages) and open it from there.</span> You can still test phone voting on this computer: open this same file in a second tab and add <b>?join</b> to the end of the address.`;
-  else if (!net) s += `<br><br><span style="color:var(--red)">Phone connection service: ${esc(peerStatus)}.</span> You can still play by clicking each group's choice on the board.`;
+  if (location.protocol === "file:") s += `<br><br><span style="color:var(--red)">This file is open from your computer, so phones can't open this link. Open the game from your GitHub Pages link instead.</span> (To practice on this computer, open this same file in a second tab with <b>?join</b> at the end of the address.)`;
+  s += `<br><br>Connection relays: <b style="color:${n.relays ? "var(--green)" : "var(--red)"}">${n.relays} of ${n.total} connected</b> · Groups joined: <b>${n.phones} of ${S.n}</b>`;
+  if (!n.relays) s += `<br><span style="color:var(--red)">No relay connected yet. If this stays at 0, this network blocks them; phones can still try on mobile data, or you can click choices on the board.</span>`;
   s += `<br><br>No phones? No problem: you can click each group's choice on the board.`;
   return s;
 }
@@ -647,7 +664,7 @@ function renderGame() {
   const st = curStep();
   $("roundLabel").textContent = `Round ${S.round} of 6 · ${info.months}`;
   $("roundTitle").textContent = info.title;
-  $("joinBox").innerHTML = `Join: <span style="color:var(--text)">${esc(shortURL())}</span><br>Code <b>${S.code}</b>`;
+  $("joinBox").innerHTML = `Join: <span style="color:var(--text)">${esc(shortURL())}</span><br>Code <b>${S.code}</b><br><span id="netStatus"></span>`;
 
   // event bar
   let q = "";
@@ -720,7 +737,7 @@ function renderGame() {
     }
 
     h += `<tr class="${g.out ? "out" : ""}">
-      <td><div class="gname">${esc(g.name)}</div><div class="student">${g.card}: ${esc(c.student)} · year total ${fmt(yearTotal(c))}</div></td>
+      <td><div class="gname">${esc(g.name)} <span data-phone="${g.id}"></span></div><div class="student">${g.card}: ${esc(c.student)} · year total ${fmt(yearTotal(c))}</div></td>
       <td>${t ? t.icon + " " + esc(t.label) : '<span class="student">choosing…</span>'}<div>${tagHTML}</div></td>
       <td class="cash ${g.cash < 0 ? "neg" : ""}">${fmt(g.cash)}</td>
       <td class="strikes">${[0, 1, 2].map(i => `<span class="${i < g.strikes ? "on" : ""}"></span>`).join("")}</td>
@@ -735,6 +752,7 @@ function renderGame() {
     h += `<div class="card" style="font-size:18px">${Object.entries(lists).map(([k, names]) => `<div style="margin:6px 0"><b>${esc(names.join(", "))}:</b> ${k.split(" | ").map((x, i) => `<span class="tag">${i + 1}. ${esc(x)}</span>`).join(" ")}</div>`).join("")}</div>`;
   }
   $("board").innerHTML = h;
+  setTimeout(renderNet, 0);
   $("board").querySelectorAll("button[data-g]").forEach(b => b.onclick = () => {
     const gid = b.dataset.g, k = b.dataset.k;
     if (S.phase === "vote-revealed") { snapshot(); S.vote.answers[gid] = k; save(); render(); }
@@ -758,7 +776,7 @@ function renderFinal() {
   gs.forEach((g, i) => {
     h += `<tr class="${g === winner ? "winner" : ""} ${g.out ? "out" : ""}">
       <td>${g.out ? "–" : i + 1}</td>
-      <td><div class="gname">${esc(g.name)}</div><div class="student">${g.card}: ${esc(card(g).student)}${g.out ? " · OUT: " + esc(g.outWhy) : ""}</div></td>
+      <td><div class="gname">${esc(g.name)} <span data-phone="${g.id}"></span></div><div class="student">${g.card}: ${esc(card(g).student)}${g.out ? " · OUT: " + esc(g.outWhy) : ""}</div></td>
       <td class="pct">${g.out ? "OUT" : Math.round(score(g) * 100) + "%"}</td>
       <td class="strikes">${[0, 1, 2].map(k => `<span class="${k < g.strikes ? "on" : ""}"></span>`).join("")}</td>
       <td class="${S.revealDollars ? "" : "hidden"} cash">${fmt(g.cash + carValue(g))}</td>
@@ -771,136 +789,245 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
 
 /* =====================================================================
    PHONE CONNECTIONS
-   Two transports, used together:
-   - PeerJS (over the internet) when the page is hosted online
-   - BroadcastChannel (same computer, other tabs) for testing/practice
+   Phones and the host never connect to each other directly. Both connect
+   OUT to public MQTT relays over secure WebSockets (like loading a web page),
+   which works on far more networks than peer-to-peer. Three relays are used
+   at once; any one of them is enough. BroadcastChannel also links tabs on
+   the same computer, for practice.
    ===================================================================== */
 let MODE = new URLSearchParams(location.search).has("join") ? "phone" : "host";
-let peer = null, peerStatus = "connecting…", conns = [];
-let bc = null;
+const DEFAULT_RELAYS = [
+  "wss://broker.emqx.io:8084/mqtt",
+  "wss://broker.hivemq.com:8884/mqtt",
+  "wss://mqtt.eclipseprojects.io:443/mqtt",
+];
+const RELAYS = (() => { const r = new URLSearchParams(location.search).getAll("relay"); return r.length ? r : DEFAULT_RELAYS; })();
+const TOPIC = code => "caryear-game-v2/" + code.toUpperCase();
 function joinURL() { return location.origin === "null" ? location.href.split("?")[0] + "?join" : location.origin + location.pathname + "?join"; }
 function shortURL() { return joinURL().replace(/^https?:\/\//, ""); }
 
-// PeerJS loads in the background so a slow or offline network never blocks the game
-function loadPeer(cb) {
-  let done = false; const once = () => { if (!done) { done = true; cb(); } };
-  if (typeof Peer !== "undefined" || location.protocol === "file:") return once();
-  const s = document.createElement("script");
-  s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
-  s.onload = once; s.onerror = once; document.head.appendChild(s);
-  setTimeout(once, 8000);
+/* ---------- a tiny MQTT 3.1.1 client over WebSocket (QoS 0) ---------- */
+class MiniMQTT {
+  constructor(url, onMessage, onStatus) {
+    this.url = url; this.onMessage = onMessage; this.onStatus = onStatus || (() => {});
+    this.topics = new Set(); this.retained = new Map(); this.connected = false; this.status = "connecting";
+    this.delay = 1500; this.pid = 1; this.closed = false;
+    this.open();
+  }
+  setStatus(st) { this.status = st; this.onStatus(); }
+  open() {
+    if (this.closed) return;
+    this.buf = new Uint8Array(0); this.connected = false; this.setStatus("connecting");
+    let ws;
+    try { ws = new WebSocket(this.url, ["mqtt"]); } catch (e) { return this.retry(); }
+    this.ws = ws; ws.binaryType = "arraybuffer";
+    const timeout = setTimeout(() => { if (!this.connected) { try { ws.close(); } catch (e) {} } }, 10000);
+    ws.onopen = () => {
+      const id = "cy" + Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 8);
+      const body = cat(str("MQTT"), [4, 0x02, 0, 60], str(id.slice(0, 22)));   // level 4, clean session, keepalive 60 s
+      this.send(0x10, body);
+    };
+    ws.onmessage = e => { this.buf = cat(this.buf, new Uint8Array(e.data)); this.parse(); };
+    ws.onclose = () => { clearTimeout(timeout); clearInterval(this.ping); this.connected = false; this.setStatus("reconnecting"); this.retry(); };
+    ws.onerror = () => {};
+  }
+  retry() { if (this.closed) return; setTimeout(() => this.open(), this.delay); this.delay = Math.min(this.delay * 1.7, 10000); }
+  send(type, body) {
+    if (!this.ws || this.ws.readyState !== 1) return false;
+    this.ws.send(cat([type], varint(body.length), body)); return true;
+  }
+  parse() {
+    for (;;) {
+      const b = this.buf; if (b.length < 2) return;
+      let mult = 1, len = 0, i = 1, byte;
+      do { if (i >= b.length) return; byte = b[i++]; len += (byte & 127) * mult; mult *= 128; } while (byte & 128);
+      if (b.length < i + len) return;
+      const type = b[0], body = b.slice(i, i + len);
+      this.buf = b.slice(i + len);
+      this.handle(type, body);
+    }
+  }
+  handle(type, body) {
+    const kind = type >> 4;
+    if (kind === 2) {                                   // CONNACK
+      if (body[1] !== 0) { this.setStatus("refused"); try { this.ws.close(); } catch (e) {} return; }
+      this.connected = true; this.delay = 1500; this.setStatus("connected");
+      for (const t of this.topics) this.sendSub(t);
+      for (const [t, v] of this.retained) this.sendPub(t, v, true);
+      clearInterval(this.ping); this.ping = setInterval(() => this.send(0xC0, []), 25000);
+    } else if (kind === 3) {                            // PUBLISH
+      const qos = (type >> 1) & 3;
+      const tl = (body[0] << 8) | body[1];
+      const topic = new TextDecoder().decode(body.slice(2, 2 + tl));
+      let off = 2 + tl;
+      if (qos > 0) { const id = body.slice(off, off + 2); off += 2; this.send(qos === 1 ? 0x40 : 0x50, id); }
+      const text = new TextDecoder().decode(body.slice(off));
+      if (text) { try { this.onMessage(topic, JSON.parse(text)); } catch (e) {} }
+    }
+  }
+  sendSub(t) { const id = this.pid++ & 0xffff || 1; this.send(0x82, cat([id >> 8, id & 255], str(t), [0])); }
+  sendPub(t, text, retain) { return this.send(0x30 | (retain ? 1 : 0), cat(str(t), new TextEncoder().encode(text))); }
+  subscribe(t) { this.topics.add(t); if (this.connected) this.sendSub(t); }
+  publish(t, obj, retain) {
+    const text = JSON.stringify(obj);
+    if (retain) this.retained.set(t, text);             // re-sent automatically after a reconnect
+    if (this.connected) this.sendPub(t, text, retain);
+  }
+  close() { this.closed = true; try { this.ws.close(); } catch (e) {} }
 }
+function cat(...parts) {
+  const n = parts.reduce((a, p) => a + p.length, 0), out = new Uint8Array(n); let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; } return out;
+}
+function str(s) { const b = new TextEncoder().encode(s); return cat([b.length >> 8, b.length & 255], b); }
+function varint(n) { const out = []; do { let d = n % 128; n = Math.floor(n / 128); if (n > 0) d |= 128; out.push(d); } while (n > 0); return out; }
+
+/* ---------- a link = all relays + same-computer channel ---------- */
+function makeLink(code, subTopic, onMsg, onStatus) {
+  const link = { relays: [], bc: null };
+  const handler = (topic, m) => { if (m && m.code === code) onMsg(m); };
+  link.relays = RELAYS.map(u => { const c = new MiniMQTT(u, handler, onStatus); c.subscribe(TOPIC(code) + "/" + subTopic); return c; });
+  try { link.bc = new BroadcastChannel("caryear-" + code); link.bc.onmessage = e => { if (e.data && e.data.dir === subTopic) handler(null, e.data.m); }; } catch (e) {}
+  link.send = (pubTopic, m, retain) => {
+    m.code = code;
+    for (const c of link.relays) c.publish(TOPIC(code) + "/" + pubTopic, m, retain);
+    if (link.bc) try { link.bc.postMessage({ dir: pubTopic, m }); } catch (e) {}
+  };
+  link.connectedCount = () => link.relays.filter(c => c.connected).length;
+  link.close = () => { link.relays.forEach(c => c.close()); if (link.bc) link.bc.close(); };
+  return link;
+}
+
+/* ---------- host side ---------- */
+let hostLink = null;
+const phoneSeen = {};                 // gid -> last time we heard from that group's device
 function hostConnect() {
-  try { bc = new BroadcastChannel("caryear-" + S.code); bc.onmessage = e => onPhoneMsg(e.data, m => bc.postMessage(m)); } catch (e) {}
-  loadPeer(hostPeer);
+  if (hostLink) hostLink.close();
+  hostLink = makeLink(S.code, "up", onPhoneMsg, () => renderNet());
+  setInterval(() => { publishState(); renderNet(); }, 5000);    // heartbeat so phones know the host is alive
 }
-function hostPeer() {
-  if (typeof Peer === "undefined") { peerStatus = "not available (offline?)"; render(); return; }
-  if (location.protocol === "file:") { peerStatus = "not available from a local file"; return; }
-  try {
-    peer = new Peer("caryear-" + S.code.toLowerCase());
-    peer.on("open", () => { peerStatus = "ready"; render(); });
-    peer.on("error", err => { peerStatus = "error: " + (err && err.type || err); render(); });
-    peer.on("connection", c => {
-      conns.push(c);
-      c.on("data", d => onPhoneMsg(d, m => { try { c.send(m); } catch (e) {} }));
-      c.on("close", () => { conns = conns.filter(x => x !== c); });
-    });
-  } catch (e) { peerStatus = "error"; }
+function onPhoneMsg(m) {
+  if (m.gid) phoneSeen[m.gid] = Date.now();
+  if (m.t === "vote" && S.vote && m.vid === voteKey()) setAnswer(m.gid, m.key, true);
+  else if (m.t === "hello") publishState();
+  renderNet();
 }
-function onPhoneMsg(m, reply) {
-  if (!m || m.code !== S.code) return;
-  if (m.t === "hello") reply({ t: "lobby", code: S.code, groups: groupsInPlay().map(g => ({ id: g.id, name: g.name })) });
-  if (m.t === "vote") { setAnswer(m.gid, m.key, true); }
-  broadcast();
-}
+const voteKey = () => S.round + ":" + S.step;
 function phoneView(g) {
   const st = curStep();
-  const v = { t: "view", code: S.code, gid: g.id, name: g.name, student: g.card ? card(g).student : "", cash: g.cash, strikes: g.strikes,
+  const v = { gid: g.id, name: g.name, student: g.card ? card(g).student : "", cash: g.cash, strikes: g.strikes,
     out: g.out, outWhy: g.outWhy, screen: S.screen, round: S.round,
-    title: S.round ? ROUND_INFO[S.round].title : "", event: S.round ? ROUND_INFO[S.round].text : "",
+    title: S.round ? ROUND_INFO[S.round].title : "",
     transport: g.mode ? TRANSPORT[g.mode].label : "", phase: S.phase, debt: g.debt };
   if (st && st.type === "vote" && S.vote && active(g) && st.who(g)) {
-    v.voteId = S.vote.id; v.question = st.question;
+    v.vid = voteKey(); v.question = st.question;
     v.options = st.options(g).map(o => ({ key: o.key, label: o.label, disabled: !!o.disabled, why: o.why || "" }));
     v.answer = S.vote.answers[g.id] || null;
-    v.timerEnd = S.vote.timerEnd; v.now = Date.now();
+    v.timerEnd = S.vote.timerEnd;
   }
-  if (S.screen === "final") { v.score = Math.round(score(g) * 100); }
+  if (S.screen === "final") v.score = Math.round(score(g) * 100);
   return v;
 }
-function sendAll(m) {
-  if (bc) try { bc.postMessage(m); } catch (e) {}
-  for (const c of conns) try { c.send(m); } catch (e) {}
+let pubTimer = null, pubSeq = 0;
+function publishState() {
+  if (MODE !== "host" || !S || !hostLink) return;
+  const views = {}; for (const g of groupsInPlay()) views[g.id] = phoneView(g);
+  hostLink.send("state", { t: "state", sent: Date.now(), seq: ++pubSeq,
+    lobby: groupsInPlay().map(g => ({ id: g.id, name: g.name })), views }, true);
 }
-function broadcast() {
+function broadcast() { clearTimeout(pubTimer); pubTimer = setTimeout(publishState, 120); }
+function broadcastTimerOnly() {}
+function netSummary() {
+  if (!hostLink) return { relays: 0, total: RELAYS.length, phones: 0 };
+  const now = Date.now();
+  return { relays: hostLink.connectedCount(), total: RELAYS.length,
+    phones: groupsInPlay().filter(g => phoneSeen[g.id] && now - phoneSeen[g.id] < 25000).length };
+}
+function renderNet() {
   if (MODE !== "host" || !S) return;
-  for (const g of groupsInPlay()) sendAll(phoneView(g));
+  const n = netSummary();
+  const el = document.getElementById("netStatus");
+  if (el) el.innerHTML = `<span style="color:${n.relays ? "var(--green)" : "var(--red)"}">● relays ${n.relays}/${n.total}</span> · 📱 ${n.phones}/${S.n} groups`;
+  if (S.screen === "setup") { const j = $("joinHelp"); if (j) j.innerHTML = joinHelpHTML(); }
+  document.querySelectorAll("[data-phone]").forEach(e => {
+    const t = phoneSeen[e.dataset.phone]; e.textContent = t && Date.now() - t < 25000 ? "📱" : "";
+  });
 }
-let lastTimerSend = 0;
-function broadcastTimerOnly() { if (Date.now() - lastTimerSend > 900) { lastTimerSend = Date.now(); broadcast(); } }
 
 /* ---------- PHONE PAGE ---------- */
-const P = { code: "", gid: null, view: null, lobby: null, conn: null, bc: null, status: "" };
+const P = { code: "", gid: null, view: null, lobby: null, link: null, status: "", lastSeq: 0, lastSent: 0, gotAt: 0, startedAt: 0, pending: null };
 function phoneStart() {
   $("phone").classList.remove("hidden");
   P.code = (new URLSearchParams(location.search).get("code") || "").toUpperCase();
+  setInterval(phoneHeartbeat, 1000);
+  try { const saved = JSON.parse(sessionStorage.getItem("caryear-phone") || "null"); if (saved) { P.code = saved.code; P.gid = saved.gid; phoneJoin(P.code); return; } } catch (e) {}
   phoneRender();
 }
-function phoneSend(m) {
-  m.code = P.code;
-  if (P.bc) try { P.bc.postMessage(m); } catch (e) {}
-  if (P.conn && P.conn.open) try { P.conn.send(m); } catch (e) {}
-}
 function phoneJoin(code) {
-  P.code = code.toUpperCase().trim(); P.status = "Connecting…"; phoneRender();
-  const onMsg = m => {
-    if (!m || m.code !== P.code) return;
-    if (m.t === "lobby") { P.lobby = m.groups; P.status = ""; phoneRender(); }
-    if (m.t === "view" && m.gid === P.gid) { P.view = m; P.skew = m.now ? Date.now() - m.now : 0; phoneRender(); }
-  };
-  try { P.bc = new BroadcastChannel("caryear-" + P.code); P.bc.onmessage = e => onMsg(e.data); } catch (e) {}
-  phoneSend({ t: "hello" });
-  loadPeer(phonePeer);
-  setTimeout(() => { if (!P.lobby) phoneSend({ t: "hello" }); }, 1500);
+  code = (code || "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (code.length !== 4) { P.status = "The code is 4 letters."; phoneRender(); return; }
+  if (P.link) P.link.close();
+  P.code = code; P.lobby = null; P.view = null; P.lastSeq = 0; P.lastSent = 0; P.startedAt = Date.now(); P.status = "";
+  P.link = makeLink(code, "state", onHostState, () => phoneRender());
+  P.link.send("up", { t: "hello", gid: P.gid });
+  phoneRender();
 }
-function phonePeer() {
-  const onMsg = m => {
-    if (!m || m.code !== P.code) return;
-    if (m.t === "lobby") { P.lobby = m.groups; P.status = ""; phoneRender(); }
-    if (m.t === "view" && m.gid === P.gid) { P.view = m; P.skew = m.now ? Date.now() - m.now : 0; phoneRender(); }
-  };
-  if (typeof Peer !== "undefined" && location.protocol !== "file:") {
-    const me = new Peer();
-    me.on("open", () => {
-      P.conn = me.connect("caryear-" + P.code.toLowerCase(), { reliable: true });
-      P.conn.on("open", () => phoneSend({ t: "hello" }));
-      P.conn.on("data", onMsg);
-      P.conn.on("close", () => { P.status = "Disconnected. Refresh to reconnect."; phoneRender(); });
-    });
-    me.on("error", () => { if (!P.lobby) { P.status = "Couldn't reach the game. Check the code and try again."; phoneRender(); } });
+function onHostState(m) {
+  if (m.t !== "state") return;
+  if (m.sent < P.lastSent || (m.sent === P.lastSent && m.seq <= P.lastSeq)) return;   // same update via another relay
+  P.lastSent = m.sent; P.lastSeq = m.seq; P.gotAt = Date.now(); P.skew = Date.now() - m.sent;
+  P.lobby = m.lobby;
+  if (P.gid && !m.lobby.some(g => g.id === P.gid)) P.gid = null;
+  P.view = P.gid ? m.views[P.gid] : null;
+  if (P.pending && P.view && (P.view.answer === P.pending.key || P.view.vid !== P.pending.vid || P.view.phase !== "vote-open")) P.pending = null;
+  phoneRender();
+}
+let lastHello = 0;
+function phoneHeartbeat() {
+  if (!P.link) { return; }
+  const now = Date.now();
+  if (P.gid && now - lastHello > 8000) { lastHello = now; P.link.send("up", { t: "hello", gid: P.gid }); }
+  if (P.pending && now - P.pending.at > 2000) { P.pending.at = now; P.link.send("up", { t: "vote", gid: P.gid, key: P.pending.key, vid: P.pending.vid }); }
+  if (!P.lobby || (P.gotAt && now - P.gotAt > 15000)) phoneRender();
+}
+function phoneStatusHTML() {
+  if (!P.link) return "";
+  const n = P.link.connectedCount(), secs = (Date.now() - P.startedAt) / 1000;
+  let s = `<p class="note-sm">Relays connected: ${n} of ${RELAYS.length}</p>`;
+  if (!P.lobby && secs > 12) {
+    if (n === 0) s += `<p class="pwait" style="color:var(--red)">Can't reach the game relays. This Wi-Fi may be blocking them. Try turning Wi-Fi off and using mobile data, or tell your host.</p>`;
+    else s += `<p class="pwait" style="color:var(--red)">Connected, but no game with code ${esc(P.code)} found yet. Check the code, and make sure the game screen is open.</p>`;
   }
+  return s;
 }
 let phoneTick = null;
 function phoneRender() {
   const el = $("phone");
+  const stale = P.gotAt && Date.now() - P.gotAt > 15000;
   if (!P.lobby) {
     el.innerHTML = `<h2>The Car Year Game</h2><p class="pwait">Enter the code on the big screen</p>
-      <div class="row"><input id="pcode" type="text" maxlength="4" value="${esc(P.code)}" style="font-size:32px;width:160px;text-transform:uppercase;letter-spacing:.2em">
-      <button class="btn primary" id="pjoin">Join</button></div><p class="note-sm">${esc(P.status)}</p>`;
+      <div class="row"><input id="pcode" type="text" maxlength="4" autocomplete="off" autocapitalize="characters" value="${esc(P.code)}" style="font-size:32px;width:160px;text-transform:uppercase;letter-spacing:.2em">
+      <button class="btn primary" id="pjoin">${P.link ? "Retry" : "Join"}</button></div>
+      <p class="note-sm">${esc(P.status)}${P.link ? "Looking for game " + esc(P.code) + "…" : ""}</p>${phoneStatusHTML()}`;
     $("pjoin").onclick = () => phoneJoin($("pcode").value);
+    $("pcode").onkeydown = e => { if (e.key === "Enter") phoneJoin($("pcode").value); };
     return;
   }
   if (!P.gid) {
-    el.innerHTML = `<h2>Which group are you?</h2>` + P.lobby.map(g => `<button class="pbtn" data-g="${g.id}">${esc(g.name)}</button>`).join("");
-    el.querySelectorAll("[data-g]").forEach(b => b.onclick = () => { P.gid = b.dataset.g; phoneSend({ t: "hello" }); phoneRender(); });
+    el.innerHTML = `<h2>Which group are you?</h2><p class="note-sm">Game ${esc(P.code)}</p>` + P.lobby.map(g => `<button class="pbtn" data-g="${g.id}">${esc(g.name)}</button>`).join("");
+    el.querySelectorAll("[data-g]").forEach(b => b.onclick = () => {
+      P.gid = b.dataset.g; try { sessionStorage.setItem("caryear-phone", JSON.stringify({ code: P.code, gid: P.gid })); } catch (e) {}
+      P.link.send("up", { t: "hello", gid: P.gid }); P.view = null; phoneRender();
+    });
     return;
   }
   const v = P.view;
-  if (!v) { el.innerHTML = `<p class="pwait">Waiting for the game…</p>`; return; }
-  let h = `<h2>${esc(v.name)}</h2><div class="note-sm">${esc(v.student)}${v.transport ? " · " + esc(v.transport) : ""}</div>
+  if (!v) { el.innerHTML = `<p class="pwait">Joining… waiting for the game screen.</p>${phoneStatusHTML()}`; return; }
+  let h = `<h2>${esc(v.name)}</h2><div class="note-sm">${esc(v.student)}${v.transport ? " · " + esc(v.transport) : ""}
+    · <a href="#" id="pswitch" style="color:var(--muted)">switch group</a></div>
     <div class="pstat"><div><div class="v">${fmt(v.cash)}</div><div class="l">Cash</div></div>
     <div><div class="v">${v.strikes} / 3</div><div class="l">Strikes</div></div></div>`;
+  if (stale) h += `<p class="pwait" style="color:var(--red)">Lost touch with the game screen. Reconnecting… (relays ${P.link.connectedCount()}/${RELAYS.length})</p>`;
   if (v.debt) h += `<p class="note-sm">Payday loan: you owe ${fmt(v.debt)} next round.</p>`;
   if (v.out) h += `<div class="pwait">You're out: ${esc(v.outWhy)}.<br>Stay ready to tell the class what happened.</div>`;
   else if (v.screen === "final") h += `<div class="pbig">${v.score}%</div><p class="pwait">Final score. Look at the big screen!</p>`;
@@ -909,16 +1036,23 @@ function phoneRender() {
     if (v.phase === "vote-ready") h += `<p class="pwait">Talk it over. Voting opens after the 30-second timer.</p>`;
     else if (v.phase === "vote-timer") h += `<div class="pbig" id="pt">${Math.max(0, Math.ceil((v.timerEnd - (Date.now() - (P.skew || 0))) / 1000))}</div><p class="pwait">Think… voting opens soon.</p>`;
     if (v.phase === "vote-open" || v.phase === "vote-timer" || v.phase === "vote-ready") {
-      const locked = v.phase !== "vote-open" || !!v.answer;
-      h += v.options.map((o, i) => `<button class="pbtn ${v.answer === o.key ? "sel" : ""}" data-k="${o.key}" ${locked || o.disabled ? "disabled" : ""}><span class="n">${i + 1}</span>${esc(o.label)}${o.disabled ? ` <span class="note-sm">(${esc(o.why)})</span>` : ""}</button>`).join("");
+      const mine = v.answer || (P.pending && P.pending.key);
+      const locked = v.phase !== "vote-open" || !!mine;
+      h += v.options.map((o, i) => `<button class="pbtn ${mine === o.key ? "sel" : ""}" data-k="${o.key}" ${locked || o.disabled ? "disabled" : ""}><span class="n">${i + 1}</span>${esc(o.label)}${o.disabled ? ` <span class="note-sm">(${esc(o.why)})</span>` : ""}</button>`).join("");
       if (v.answer) h += `<p class="pwait">✓ Locked in. Wait for the reveal.</p>`;
+      else if (P.pending) h += `<p class="pwait">Sending your answer…</p>`;
     }
     if (v.phase === "vote-revealed") { const o = v.options.find(x => x.key === v.answer); h += `<p class="pwait">Revealed: <b>${o ? esc(o.label) : "no answer"}</b></p>`; }
   } else {
     h += `<div class="note-sm">${v.round ? "Round " + v.round + ": " + esc(v.title) : ""}</div><p class="pwait">${v.screen === "setup" ? "You're in! Waiting for the game to start." : "Watch the big screen."}</p>`;
   }
   el.innerHTML = h;
-  el.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => { phoneSend({ t: "vote", gid: P.gid, key: b.dataset.k }); });
+  el.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
+    P.pending = { key: b.dataset.k, vid: v.vid, at: Date.now() };
+    P.link.send("up", { t: "vote", gid: P.gid, key: b.dataset.k, vid: v.vid });
+    phoneRender();
+  });
+  const sw = $("pswitch"); if (sw) sw.onclick = e => { e.preventDefault(); P.gid = null; try { sessionStorage.removeItem("caryear-phone"); } catch (x) {} phoneRender(); };
   clearInterval(phoneTick);
   if (v.phase === "vote-timer") phoneTick = setInterval(() => { const t = $("pt"); if (t) t.textContent = Math.max(0, Math.ceil((v.timerEnd - (Date.now() - (P.skew || 0))) / 1000)); }, 250);
 }
