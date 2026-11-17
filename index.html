@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Car Year Game</title>
+<style>
+  :root {
+    --bg: #1F2326; --panel: #2A3034; --panel2: #333B40; --line: #3E474D;
+    --text: #F3F5F4; --muted: #A9B4B8; --amber: #F2A900; --green: #4CAF6A;
+    --red: #E0674F; --blue: #6FB3D2; --gray: #6B7F86;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: Calibri, "Segoe UI", Arial, sans-serif; }
+  h1, h2, h3 { font-family: Cambria, Georgia, serif; margin: 0; }
+  button { font: inherit; cursor: pointer; border: 0; border-radius: 10px; }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  .hidden { display: none !important; }
+
+  /* ---------- host layout ---------- */
+  #host { display: grid; grid-template-rows: auto auto 1fr auto; height: 100vh; }
+  header { display: flex; align-items: center; gap: 24px; padding: 16px 28px;
+    background: var(--panel); border-bottom: 1px solid var(--line); }
+  header .round { font-size: 15px; color: var(--amber); letter-spacing: .08em; text-transform: uppercase; font-weight: 700; }
+  header h1 { font-size: 34px; }
+  header .spacer { flex: 1; }
+  .join-box { text-align: right; font-size: 15px; color: var(--muted); line-height: 1.3; }
+  .join-box b { color: var(--amber); font-size: 26px; letter-spacing: .15em; }
+  #timer { width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 34px; font-weight: 700; background: var(--panel2); border: 4px solid var(--amber); }
+  #timer.done { border-color: var(--green); }
+
+  #eventBar { padding: 18px 28px; font-size: 24px; line-height: 1.35; background: #262C30;
+    border-bottom: 1px solid var(--line); }
+  #eventBar .q { margin-top: 8px; font-size: 20px; color: var(--amber); font-weight: 700; }
+
+  #board { overflow: auto; padding: 14px 28px; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0 10px; }
+  th { text-align: left; font-size: 14px; color: var(--muted); font-weight: 600; padding: 0 14px;
+    text-transform: uppercase; letter-spacing: .06em; }
+  td { background: var(--panel); padding: 14px; vertical-align: middle; font-size: 20px; }
+  tr td:first-child { border-radius: 12px 0 0 12px; }
+  tr td:last-child { border-radius: 0 12px 12px 0; }
+  tr.out td { opacity: .38; }
+  .gname { font-size: 24px; font-weight: 700; }
+  .student { font-size: 15px; color: var(--muted); }
+  .cash { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cash.neg { color: var(--red); }
+  .strikes span { display: inline-block; width: 20px; height: 20px; border-radius: 50%;
+    border: 2px solid var(--red); margin-right: 5px; vertical-align: middle; }
+  .strikes span.on { background: var(--red); }
+  .tag { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 14px; font-weight: 700;
+    background: var(--panel2); margin: 2px 4px 2px 0; }
+  .tag.loan { background: #5a3a1c; color: #ffcf8a; }
+  .tag.outtag { background: #5a2626; color: #ffb3a6; }
+  .notes { font-size: 16px; color: var(--muted); line-height: 1.35; max-width: 360px; }
+  .notes .bad { color: var(--red); } .notes .good { color: var(--green); }
+
+  .die { width: 56px; height: 56px; border-radius: 12px; background: #fff; color: #1F2326;
+    display: inline-grid; place-items: center; font-size: 32px; font-weight: 800; }
+  .die.idle { background: var(--panel2); color: var(--muted); font-size: 16px; }
+  .die.bad { box-shadow: 0 0 0 4px var(--red); }
+  .die.ok { box-shadow: 0 0 0 4px var(--green); }
+  .die.rolling { animation: wobble .12s infinite alternate; }
+  @keyframes wobble { from { transform: rotate(-12deg) scale(1.05); } to { transform: rotate(12deg) scale(.95); } }
+
+  .answer { font-size: 18px; }
+  .answer .pending { color: var(--muted); }
+  .answer .done { color: var(--green); font-weight: 700; }
+  .answer .chosen { color: var(--amber); font-weight: 700; }
+  .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .opts button { background: var(--panel2); color: var(--text); padding: 6px 10px; font-size: 14px; }
+  .opts button.sel { background: var(--amber); color: #1F2326; font-weight: 700; }
+
+  footer { display: flex; gap: 12px; align-items: center; padding: 14px 28px; background: var(--panel);
+    border-top: 1px solid var(--line); }
+  footer .step { color: var(--muted); font-size: 16px; flex: 1; }
+  .btn { padding: 12px 20px; font-size: 18px; font-weight: 700; background: var(--panel2); color: var(--text); }
+  .btn.primary { background: var(--amber); color: #1F2326; font-size: 20px; padding: 14px 28px; }
+  .btn.small { padding: 8px 12px; font-size: 14px; }
+
+  /* ---------- setup + final ---------- */
+  .screen { max-width: 980px; margin: 40px auto; padding: 0 24px; }
+  .screen h1 { font-size: 48px; margin-bottom: 8px; }
+  .screen p { font-size: 19px; color: var(--muted); line-height: 1.45; }
+  .card { background: var(--panel); border-radius: 14px; padding: 20px 24px; margin: 18px 0; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  input[type=text], select { font: inherit; font-size: 18px; padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--panel2); color: var(--text); }
+  .deal { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+  .deal .slot { background: var(--panel2); border-radius: 12px; padding: 14px; }
+  .deal .slot b { font-size: 20px; }
+  .rank td { font-size: 24px; }
+  .rank .pct { font-size: 34px; font-weight: 800; color: var(--amber); }
+  .winner td { box-shadow: inset 0 0 0 3px var(--amber); }
+
+  /* ---------- phone ---------- */
+  #phone { max-width: 520px; margin: 0 auto; padding: 18px; min-height: 100vh; }
+  #phone h2 { font-size: 26px; }
+  .pstat { display: flex; gap: 10px; margin: 14px 0; }
+  .pstat div { flex: 1; background: var(--panel); border-radius: 12px; padding: 12px; text-align: center; }
+  .pstat .v { font-size: 26px; font-weight: 800; }
+  .pstat .l { font-size: 13px; color: var(--muted); text-transform: uppercase; }
+  .pq { font-size: 21px; line-height: 1.35; margin: 16px 0 10px; }
+  .pbtn { display: block; width: 100%; text-align: left; padding: 18px; margin: 10px 0; font-size: 19px;
+    background: var(--panel2); color: var(--text); }
+  .pbtn .n { display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 50%;
+    background: var(--amber); color: #1F2326; font-weight: 800; margin-right: 10px; }
+  .pbtn.sel { outline: 4px solid var(--amber); }
+  .pwait { font-size: 20px; color: var(--muted); text-align: center; margin: 30px 0; line-height: 1.5; }
+  .pbig { font-size: 64px; font-weight: 800; text-align: center; color: var(--amber); }
+  .note-sm { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ======================= HOST: SETUP ======================= -->
+<div id="setup" class="screen hidden">
+  <h1>The Car Year Game</h1>
+  <p>One year as a college student in our town. Every group gets a random budget and has to get to class and work. Survive all six rounds and keep the biggest share of your money.</p>
+
+  <div class="card">
+    <h3>1. Groups</h3>
+    <div class="row">
+      <label>Number of groups</label>
+      <select id="nGroups"><option value="4">4</option><option value="5" selected>5</option></select>
+    </div>
+    <div id="nameInputs" class="row"></div>
+  </div>
+
+  <div class="card">
+    <h3>2. Budget cards</h3>
+    <p>Deal the cards at random, or match the envelopes each group drew. With 4 groups, card C is left out.</p>
+    <div class="row"><button class="btn primary" id="dealBtn">Deal cards at random</button></div>
+    <div id="dealView" class="deal"></div>
+  </div>
+
+  <div class="card">
+    <h3>3. Phone voting (optional)</h3>
+    <p id="joinHelp"></p>
+  </div>
+
+  <div class="row">
+    <button class="btn primary" id="startBtn" disabled>Start the game ▶</button>
+    <span class="note-sm" id="resumeNote"></span>
+  </div>
+</div>
+
+<!-- ======================= HOST: GAME ======================= -->
+<div id="host" class="hidden">
+  <header>
+    <div>
+      <div class="round" id="roundLabel"></div>
+      <h1 id="roundTitle"></h1>
+    </div>
+    <div class="spacer"></div>
+    <div id="timer" class="hidden">30</div>
+    <div class="join-box" id="joinBox"></div>
+  </header>
+  <div id="eventBar"></div>
+  <div id="board"></div>
+  <footer>
+    <div class="step" id="stepLabel"></div>
+    <button class="btn small" id="undoBtn" title="Undo the last step">↶ Undo</button>
+    <button class="btn small hidden" id="addTimeBtn">+15 s</button>
+    <button class="btn small" id="skipTimerBtn">Skip timer</button>
+    <button class="btn primary" id="nextBtn">Next ▶</button>
+  </footer>
+</div>
+
+<!-- ======================= HOST: FINAL ======================= -->
+<div id="final" class="screen hidden">
+  <h1>Final scores</h1>
+  <p>Score = (cash + car value) ÷ year total. Highest percentage wins; ties go to fewer strikes.</p>
+  <div id="finalTable"></div>
+  <div class="row">
+    <button class="btn primary" id="revealDollarsBtn">Reveal raw dollars</button>
+    <button class="btn" id="backToBoardBtn">Back to board</button>
+    <button class="btn" id="newGameBtn">New game</button>
+  </div>
+</div>
+
+<!-- ======================= PHONE ======================= -->
+<div id="phone" class="hidden"></div>
+
+<script>
+"use strict";
+/* =====================================================================
+   RULES (from the rulebook). All dollar amounts are per 2-month round.
+   ===================================================================== */
+const CARDS = {
+  A: { student: "Avery", blurb: "Parents cover everything; doesn't need a job", savings: 6000, family: 1800, job: 0 },
+  B: { student: "Blake", blurb: "Parents help out; works at the campus library", savings: 3000, family: 700, job: 900 },
+  C: { student: "Casey", blurb: "A little family help; works at a café downtown", savings: 1500, family: 300, job: 1000 },
+  D: { student: "Drew", blurb: "On their own; works at a warehouse on the edge of town", savings: 400, family: 0, job: 1000 },
+  E: { student: "Emerson", blurb: "On their own; works at a grocery store across town", savings: 100, family: 0, job: 900 },
+};
+const yearTotal = c => c.savings + 6 * (c.family + c.job);
+
+const TRANSPORT = {
+  BUS:  { label: "Bus pass", icon: "🚌", up: 0, reg: 0, full: 100, min: 100, value: 0, car: false },
+  USED: { label: "Used car (cash)", icon: "🚗", up: 2500, reg: 150, full: 450, min: 300, value: 1500, car: true },
+  BHPH: { label: "Used car (buy-here-pay-here)", icon: "🚗", up: 0, reg: 0, full: 900, min: 750, value: 0, car: true, loan: 450 },
+  NEW:  { label: "New car", icon: "🚙", up: 2000, reg: 150, full: 1350, min: 1200, value: 1000, car: true, loan: 700 },
+  EV:   { label: "Electric car", icon: "⚡", up: 2000, reg: 250, full: 1300, min: 1150, value: 1000, car: true, loan: 750 },
+};
+const ROUND_INFO = [
+  null,
+  { months: "Jan–Feb", title: "Move-in", text: "Welcome to campus! Before classes start you need a way to get around. The bus runs once an hour, and the warehouse district and Route 9 have no stop at all." },
+  { months: "Mar–Apr", title: "Midterms", text: "Gas prices jumped this spring, and midterms are next week." },
+  { months: "May–Jun", title: "Summer internship", text: "A paid summer internship at the new office park on Route 9 pays $3,000. No bus goes there, and the 6-mile road has no bike lane." },
+  { months: "Jul–Aug", title: "Breakdown season", text: "Summer heat is hard on cars, and the city cut summer bus service to every 90 minutes." },
+  { months: "Sep–Oct", title: "The move", text: "Your employer is moving to the new office park on Route 9. There is still no bus. And traffic on the busy roads keeps getting worse." },
+  { months: "Nov–Dec", title: "Going home", text: "Thanksgiving is 3 hours away, and the first snowstorm hits in December." },
+];
+const TIMER_SECONDS = 30;
+const fmt = n => (n < 0 ? "−$" : "$") + Math.abs(Math.round(n)).toLocaleString("en-US");
+
+/* ---------- helpers on a group ---------- */
+const card = g => CARDS[g.card];
+const isCar = g => g.mode && TRANSPORT[g.mode].car;
+const isBus = g => g.mode === "BUS";
+const hasJob = g => card(g).job > 0;
+const active = g => !g.out;
+const perRound = g => {
+  if (!g.mode) return 0;
+  const t = TRANSPORT[g.mode];
+  let c = g.insurance === "min" ? t.min : t.full;
+  if (isCar(g)) c += g.bump;
+  return c + g.rideshare + g.deadLoan;
+};
+const carValue = g => (isCar(g) ? TRANSPORT[g.mode].value : 0);
+const score = g => (g.cash + carValue(g)) / yearTotal(card(g));
+function note(g, text, kind) { g.notes.push({ text, kind: kind || "" }); }
+function strike(g, why) { g.strikes += 1; note(g, "Strike: " + why, "bad"); }
+function killCar(g, why) {
+  const t = TRANSPORT[g.mode];
+  g.deadLoan = t.loan && g.mode !== "USED" ? t.loan : 0;
+  g.mode = "BUS"; g.insurance = "full"; g.bump = 0; g.patched = false;
+  strike(g, why);
+  note(g, "Car is dead; riding the bus from now on" + (g.deadLoan ? " (still paying the " + fmt(g.deadLoan) + " loan)" : ""), "bad");
+}
+
+/* =====================================================================
+   ROUND SCRIPTS. Each round is a list of steps the host clicks through.
+   Step types:
+     info  – show a message (no state change)
+     auto  – apply a rule to every active group
+     roll  – roll one die per affected group (animated); result -> g.roll[id]
+     vote  – 30-second think timer, then groups choose; then apply
+     end   – end-of-round checks (strikes, going broke)
+   ===================================================================== */
+function paydayRoll() {
+  return { type: "roll", id: "shift", label: "Bus riders roll for missed shifts (1–4: half pay; a 1 is also a strike)",
+    who: g => isBus(g) && hasJob(g) && !g.rideshare, bad: n => n <= 4 };
+}
+function payday() {
+  return { type: "auto", label: "Payday: family money + job pay (and payday-loan repayment)", run: g => {
+    const c = card(g);
+    let pay = c.job;
+    if (g.roll.shift) {
+      if (g.roll.shift <= 4) pay = Math.round(pay / 2);
+      if (g.roll.shift === 1) strike(g, "the bus made you miss a whole shift");
+    }
+    g.cash += c.family + pay;
+    note(g, "+" + fmt(c.family + pay) + " income" + (g.roll.shift && g.roll.shift <= 4 ? " (missed shifts: half pay)" : ""), "good");
+    if (g.debt) { g.cash -= g.debt; note(g, "Repaid payday loan: −" + fmt(g.debt), "bad"); g.debt = 0; }
+  }};
+}
+function bills() {
+  return { type: "auto", label: "Bills: every-round transportation costs", run: g => {
+    const c = perRound(g);
+    g.cash -= c; note(g, "Bills −" + fmt(c));
+  }};
+}
+const end = { type: "end", label: "End of round: check strikes and money" };
+
+const ROUNDS = {
+  1: [
+    { type: "vote", id: "transport", question: "How will you get around this year?",
+      who: active,
+      options: g => Object.entries(TRANSPORT).map(([k, t]) => {
+        const upfront = t.up + t.reg;
+        return { key: k, label: t.label + " · " + fmt(upfront) + " up front" + (k === "BHPH" ? " (dealer loan, high interest)" : ""),
+          disabled: upfront > g.cash, why: "can't afford the up-front cost" };
+      }),
+      apply: (g, k) => {
+        const t = TRANSPORT[k];
+        g.mode = k; g.insurance = "full";
+        g.cash -= t.up + t.reg;
+        note(g, "Chose " + t.label + (t.up + t.reg ? ": −" + fmt(t.up + t.reg) + " up front" : ""));
+      } },
+    { type: "vote", id: "insurance", question: "Car owners: which insurance?",
+      who: g => active(g) && isCar(g),
+      options: g => [
+        { key: "full", label: "Full insurance (" + fmt(TRANSPORT[g.mode].full) + "/round)" },
+        { key: "min", label: "Minimum insurance (" + fmt(TRANSPORT[g.mode].min) + "/round, risky)" } ],
+      apply: (g, k) => { g.insurance = k; note(g, k === "full" ? "Full insurance" : "Minimum insurance"); } },
+    paydayRoll(), payday(), bills(), end,
+  ],
+  2: [
+    paydayRoll(), payday(), bills(),
+    { type: "auto", label: "Electric cars skip the gas spike", run: g => { if (g.mode === "EV") note(g, "EV: gas spike doesn't affect you", "good"); } },
+    { type: "roll", id: "midterm", label: "Bus riders roll: on 1–3 the bus is canceled on midterm morning",
+      who: g => isBus(g), bad: n => n <= 3 },
+    { type: "vote", id: "r2", question: "Gas cars: pay for gas or carpool? Bus riders whose bus was canceled: rideshare or miss the midterm?",
+      who: g => (isCar(g) && g.mode !== "EV") || (isBus(g) && g.roll.midterm <= 3),
+      options: g => isCar(g)
+        ? [ { key: "pay", label: "Pay the extra $100 for gas" },
+            { key: "carpool", label: "Carpool for $0 (roll: 1–2 the carpool bails → strike)" } ]
+        : [ { key: "ride", label: "Pay $60 for a rideshare", disabled: g.cash < 60, why: "not enough cash" },
+            { key: "miss", label: "Miss the midterm → strike" } ],
+      apply: (g, k) => {
+        if (k === "pay") { g.cash -= 100; note(g, "Gas spike −$100"); }
+        if (k === "carpool") note(g, "Carpooling (rolling next)");
+        if (k === "ride") { g.cash -= 60; note(g, "Rideshare to the midterm −$60"); }
+        if (k === "miss") strike(g, "missed the midterm");
+      } },
+    { type: "roll", id: "carpool", label: "Carpoolers roll: on 1–2 the carpool bails",
+      who: g => g.choice.r2 === "carpool", bad: n => n <= 2,
+      after: (g, n) => { if (n <= 2) strike(g, "the carpool bailed on midterm morning"); else note(g, "Carpool showed up", "good"); } },
+    end,
+  ],
+  3: [
+    paydayRoll(), payday(), bills(),
+    { type: "vote", id: "r3", question: "Take the $3,000 internship on Route 9?",
+      who: active,
+      options: g => isCar(g)
+        ? [ { key: "take", label: "Take it: +$3,000, minus $150 extra gas" },
+            { key: "skip", label: "Skip it" } ]
+        : [ { key: "ride", label: "Take it and rideshare: +$1,500 after $1,500 in rides", disabled: g.cash < 1500, why: "need $1,500 in cash now" },
+            { key: "bike", label: "Take it and buy a $150 bike (roll: 1–3 you're let go → no pay + strike)", disabled: g.cash < 150, why: "need $150" },
+            { key: "skip", label: "Skip it" } ],
+      apply: (g, k) => {
+        if (k === "take") { g.cash += 2850; note(g, "Internship +$3,000, gas −$150", "good"); }
+        if (k === "ride") { g.cash += 1500; note(g, "Internship +$3,000, rides −$1,500", "good"); }
+        if (k === "bike") { g.cash -= 150; note(g, "Bought a bike −$150 (rolling next)"); }
+        if (k === "skip") note(g, "Skipped the internship");
+      } },
+    { type: "roll", id: "bike", label: "Bikers roll: on 1–3 flats, storms and close calls get you let go",
+      who: g => g.choice.r3 === "bike", bad: n => n <= 3,
+      after: (g, n) => { if (n <= 3) strike(g, "late too often; the internship let you go (no pay)"); else { g.cash += 3000; note(g, "Made it all summer: +$3,000", "good"); } } },
+    end,
+  ],
+  4: [
+    paydayRoll(), payday(), bills(),
+    { type: "roll", id: "r4", label: "Everyone rolls. Used cars: 1–3 transmission failing. New/EV: 1 = $250 deductible. Bus: 1–3 miss a shift",
+      who: active,
+      bad: (n, g) => (g.mode === "NEW" || g.mode === "EV") ? n === 1 : n <= 3,
+      after: (g, n) => { if ((g.mode === "NEW" || g.mode === "EV") && n === 1) { g.cash -= 250; note(g, "Warranty deductible −$250", "bad"); } } },
+    { type: "vote", id: "r4v", question: "Used cars: the transmission is failing. Bus riders: the cut schedule made you miss a shift.",
+      who: g => (g.roll.r4 <= 3) && (g.mode === "USED" || g.mode === "BHPH" || isBus(g)),
+      options: g => isBus(g)
+        ? [ { key: "ride", label: "Pay $150 for rides", disabled: g.cash < 150, why: "not enough cash" },
+            { key: "miss", label: "Miss the shift → strike" } ]
+        : [ { key: "fix", label: "Full repair: $1,200", disabled: g.cash < 1200, why: "can't afford" },
+            { key: "patch", label: "Cheap patch: $500 (roll again in Round 6)", disabled: g.cash < 500, why: "can't afford" },
+            { key: "dead", label: "Let it die → strike, bus from next round" } ],
+      apply: (g, k) => {
+        if (k === "ride") { g.cash -= 150; note(g, "Rides −$150"); }
+        if (k === "miss") strike(g, "missed a shift (summer service cuts)");
+        if (k === "fix") { g.cash -= 1200; note(g, "Transmission repair −$1,200", "bad"); }
+        if (k === "patch") { g.cash -= 500; g.patched = true; note(g, "Cheap patch −$500", "bad"); }
+        if (k === "dead") killCar(g, "your car died");
+      } },
+    end,
+  ],
+  5: [
+    paydayRoll(), payday(), bills(),
+    { type: "auto", label: "Bus fare goes up $40 this round", run: g => { if (isBus(g)) { g.cash -= 40; note(g, "Fare increase −$40"); } } },
+    { type: "vote", id: "r5move", question: "Bus riders with a job: your job moved to Route 9, where no bus goes. What now?",
+      who: g => isBus(g) && hasJob(g) && !g.rideshare,
+      options: g => [
+        { key: "buy", label: "Buy your roommate's old car: $2,650 now", disabled: g.cash < 2650, why: "need $2,650" },
+        { key: "ride", label: "Rideshare to work: $900 every round" },
+        { key: "quit", label: "Quit → you're out" } ],
+      apply: (g, k) => {
+        if (k === "buy") { g.cash -= 2650 + 350; g.mode = "USED"; g.insurance = "full"; g.deadLoan = g.deadLoan || 0;
+          note(g, "Bought the roommate's car −$2,650 (+$350 car bills this round)"); }
+        if (k === "ride") { g.rideshare = 900; g.cash -= 900; note(g, "Rideshare to work −$900 (every round now)", "bad"); }
+        if (k === "quit") { g.out = true; g.outWhy = "Quit: couldn't get to the job"; note(g, "Quit: couldn't get to work", "bad"); }
+      } },
+    { type: "roll", id: "r5crash", label: "Car owners roll: on 1–2 you cause a fender bender",
+      who: g => isCar(g), bad: n => n <= 2,
+      after: (g, n) => { if (n <= 2) { g.bump = 100; if (g.insurance === "full") { g.cash -= 500; note(g, "Fender bender: −$500 deductible, insurance +$100/round", "bad"); } else note(g, "Fender bender with minimum insurance!", "bad"); } } },
+    { type: "vote", id: "r5min", question: "Fender bender on minimum insurance: pay for the damage or lose the car?",
+      who: g => isCar(g) && g.roll.r5crash <= 2 && g.insurance === "min",
+      options: g => [
+        { key: "pay", label: "Pay $2,000 for the damage", disabled: g.cash < 2000, why: "can't afford" },
+        { key: "total", label: "Car is totaled → strike, bus from next round" } ],
+      apply: (g, k) => { if (k === "pay") { g.cash -= 2000; note(g, "Paid for the damage −$2,000", "bad"); } else killCar(g, "your car was totaled"); } },
+    end,
+  ],
+  6: [
+    paydayRoll(), payday(), bills(),
+    { type: "auto", label: "Car owners pay $100 in gas to go home", run: g => { if (isCar(g)) { g.cash -= 100; note(g, "Gas home −$100"); } } },
+    { type: "vote", id: "r6home", question: "Bus riders: how do you get home for Thanksgiving?",
+      who: g => isBus(g),
+      options: g => [ { key: "bus", label: "Intercity bus: $80", disabled: g.cash < 80, why: "not enough cash" },
+                      { key: "skip", label: "Skip Thanksgiving with family: $0" } ],
+      apply: (g, k) => { if (k === "bus") { g.cash -= 80; note(g, "Intercity bus −$80"); } else note(g, "Stayed on campus for Thanksgiving"); } },
+    { type: "roll", id: "r6", label: "Everyone rolls. Cars: 1–2 winter damage (patched cars: 1–3 transmission fails). Bus: 1–3 snowstorm",
+      who: active,
+      bad: (n, g) => (isCar(g) && !g.patched) ? n <= 2 : n <= 3,
+      after: (g, n) => { if (isCar(g) && !g.patched && n <= 2) { g.cash -= 250; note(g, g.mode === "EV" ? "Cold weather range loss −$250" : "Dead battery / tires −$250", "bad"); } } },
+    { type: "vote", id: "r6v", question: "Patched cars: the transmission failed for good. Bus riders: the snowstorm canceled the buses.",
+      who: g => g.roll.r6 <= 3 && ((isCar(g) && g.patched) || isBus(g)),
+      options: g => isBus(g)
+        ? [ { key: "ride", label: "Pay $120 for rides", disabled: g.cash < 120, why: "not enough cash" },
+            { key: "miss", label: "Miss work/class → strike" } ]
+        : [ { key: "fix", label: "Pay $1,200 to fix it", disabled: g.cash < 1200, why: "can't afford" },
+            { key: "dead", label: "Let it die → strike" } ],
+      apply: (g, k) => {
+        if (k === "ride") { g.cash -= 120; note(g, "Snow day rides −$120"); }
+        if (k === "miss") strike(g, "snowstorm");
+        if (k === "fix") { g.cash -= 1200; g.patched = false; note(g, "Transmission replaced −$1,200", "bad"); }
+        if (k === "dead") killCar(g, "the transmission failed for good");
+      } },
+    end,
+  ],
+};
+
+/* =====================================================================
+   STATE (saved in the browser so a refresh doesn't lose the game)
+   ===================================================================== */
+const SAVE_KEY = "caryear-game-v1";
+let S = null;          // game state
+let undoStack = [];      // undo snapshots
+function newGroup(i, name) {
+  return { id: "g" + (i + 1), name, card: null, cash: 0, mode: null, insurance: "full", strikes: 0,
+    debt: 0, loans: 0, out: false, outWhy: "", bump: 0, rideshare: 0, deadLoan: 0, patched: false,
+    roll: {}, choice: {}, notes: [] };
+}
+function freshState() {
+  const names = ["Group 1", "Group 2", "Group 3", "Group 4", "Group 5"];
+  return { screen: "setup", code: makeCode(), n: 5, groups: names.map((n, i) => newGroup(i, n)),
+    round: 0, step: -1, phase: "idle", vote: null, rolling: null, revealDollars: false };
+}
+function makeCode() {
+  const a = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+  let s = ""; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)];
+  return s;
+}
+function save() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); } catch (e) {} }
+function load() { try { const t = localStorage.getItem(SAVE_KEY); return t ? JSON.parse(t) : null; } catch (e) { return null; } }
+function snapshot() { undoStack.push(JSON.stringify(S)); if (undoStack.length > 80) undoStack.shift(); }
+function undo() {
+  if (!undoStack.length) return;
+  stopTimer(); S = JSON.parse(undoStack.pop()); save(); render();
+}
+const groupsInPlay = () => S.groups.slice(0, S.n);
+const curSteps = () => ROUNDS[S.round] || [];
+const curStep = () => curSteps()[S.step];
+
+/* =====================================================================
+   FLOW
+   ===================================================================== */
+function startGame() {
+  snapshot();
+  for (const g of groupsInPlay()) { g.cash = CARDS[g.card].savings; }
+  S.screen = "game"; S.round = 1; S.step = -1; S.phase = "intro";
+  groupsInPlay().forEach(g => { g.notes = []; g.roll = {}; g.choice = {}; });
+  save(); render();
+}
+
+// Is a step relevant to anyone? (skip empty rolls/votes automatically)
+function stepHasPlayers(st) {
+  if (st.type === "roll" || st.type === "vote") return groupsInPlay().some(g => active(g) && st.who(g));
+  return true;
+}
+
+function next() {
+  if (S.screen !== "game") return;
+  if (S.rolling) return;                          // wait for dice
+  // inside a vote: timer -> open -> reveal -> apply
+  if (S.phase === "vote-ready") { startTimer(); return; }
+  if (S.phase === "vote-timer") return;
+  if (S.phase === "vote-open") { revealVotes(); return; }
+  if (S.phase === "vote-revealed") { applyVotes(); return; }
+  if (S.phase === "roll-ready") { doRolls(); return; }
+
+  snapshot();
+  // advance to the next step that applies to someone
+  let i = S.step + 1;
+  while (i < curSteps().length && !stepHasPlayers(curSteps()[i])) i++;
+  if (i >= curSteps().length) {
+    if (S.round >= 6) { S.screen = "final"; S.phase = "final"; save(); render(); return; }
+    S.round += 1; S.step = -1; S.phase = "intro";
+    groupsInPlay().forEach(g => { g.notes = []; g.roll = {}; g.choice = {}; });
+    save(); render(); return;
+  }
+  S.step = i;
+  const st = curStep();
+  if (st.type === "auto") {
+    groupsInPlay().filter(active).forEach(g => st.run(g));
+    S.phase = "done";
+  } else if (st.type === "roll") {
+    S.phase = "roll-ready";
+  } else if (st.type === "vote") {
+    S.vote = { id: st.id, answers: {}, timerEnd: 0, open: false, revealed: false };
+    S.phase = "vote-ready";
+  } else if (st.type === "end") {
+    endOfRound(); S.phase = "done";
+  }
+  save(); render();
+}
+
+function endOfRound() {
+  for (const g of groupsInPlay().filter(active)) {
+    if (g.strikes >= 3) { g.out = true; g.outWhy = "3 strikes: failed out or fired"; note(g, "OUT: 3 strikes", "bad"); continue; }
+    if (g.cash < 0) {
+      if (g.loans === 0) {
+        g.loans = 1; g.debt = Math.round(-g.cash * 1.5);
+        note(g, "Payday loan of " + fmt(-g.cash) + "; repay " + fmt(g.debt) + " next round", "bad");
+        g.cash = 0;
+      } else {
+        g.out = true; g.outWhy = "Went broke twice"; note(g, "OUT: broke twice", "bad");
+      }
+    }
+  }
+}
+
+/* ---------- dice ---------- */
+function d6() {
+  const a = new Uint32Array(1); crypto.getRandomValues(a); return (a[0] % 6) + 1;
+}
+async function doRolls() {
+  const st = curStep();
+  snapshot();
+  const who = groupsInPlay().filter(g => active(g) && st.who(g));
+  S.rolling = { id: st.id, current: null };
+  render();
+  for (const g of who) {
+    S.rolling.current = g.id; render();
+    await sleep(window.__fast ? 1 : 900);
+    const n = d6();
+    g.roll[st.id] = n;
+    if (st.after) st.after(g, n);
+    S.rolling.current = null; render();
+    await sleep(window.__fast ? 1 : 350);
+  }
+  S.rolling = null; S.phase = "done"; save(); render();
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+/* ---------- votes ---------- */
+let timerHandle = null;
+function startTimer(extra) {
+  snapshot();
+  S.vote.timerEnd = Date.now() + (extra || TIMER_SECONDS) * 1000;
+  S.phase = "vote-timer"; save(); render(); tickTimer();
+}
+function tickTimer() {
+  stopTimer();
+  timerHandle = setInterval(() => {
+    if (S.phase !== "vote-timer") { stopTimer(); return; }
+    if (Date.now() >= S.vote.timerEnd) { stopTimer(); S.phase = "vote-open"; save(); render(); }
+    else renderTimer();
+  }, 250);
+}
+function stopTimer() { if (timerHandle) clearInterval(timerHandle); timerHandle = null; }
+function skipTimer() { if (S.phase === "vote-timer") { stopTimer(); S.phase = "vote-open"; save(); render(); } }
+function addTime() { if (S.phase === "vote-timer") { S.vote.timerEnd += 15000; save(); renderTimer(); } }
+
+function voters() { const st = curStep(); return groupsInPlay().filter(g => active(g) && st.who(g)); }
+function setAnswer(gid, key, fromPhone) {
+  if (!S.vote || S.phase !== "vote-open") return false;
+  if (S.vote.revealed) return false;
+  const g = S.groups.find(x => x.id === gid);
+  const st = curStep();
+  if (!g || !active(g) || !st.who(g)) return false;
+  const opt = st.options(g).find(o => o.key === key);
+  if (!opt || opt.disabled) return false;
+  S.vote.answers[gid] = key; save();
+  // reveal automatically when everyone has answered from their phones
+  if (fromPhone && voters().every(v => S.vote.answers[v.id])) { revealVotes(); return true; }
+  render(); return true;
+}
+function revealVotes() {
+  const missing = voters().filter(v => !S.vote.answers[v.id]);
+  if (missing.length && !confirm(missing.map(m => m.name).join(", ") + " hasn't answered. Reveal anyway? (You can still pick for them before applying.)")) return;
+  snapshot(); S.vote.revealed = true; S.phase = "vote-revealed"; save(); render();
+}
+function applyVotes() {
+  const st = curStep();
+  const missing = voters().filter(v => !S.vote.answers[v.id]);
+  if (missing.length) { alert("Pick an option for: " + missing.map(m => m.name).join(", ")); return; }
+  snapshot();
+  for (const g of voters()) { const k = S.vote.answers[g.id]; g.choice[st.id] = k; st.apply(g, k); }
+  S.phase = "done"; save(); render();
+}
+
+/* =====================================================================
+   RENDER — HOST
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+function render() {
+  if (MODE === "phone") return;
+  $("setup").classList.toggle("hidden", S.screen !== "setup");
+  $("host").classList.toggle("hidden", S.screen !== "game");
+  $("final").classList.toggle("hidden", S.screen !== "final");
+  if (S.screen === "setup") renderSetup();
+  if (S.screen === "game") renderGame();
+  if (S.screen === "final") renderFinal();
+  broadcast();
+}
+
+function renderSetup() {
+  $("nGroups").value = String(S.n);
+  const ni = $("nameInputs"); ni.innerHTML = "";
+  groupsInPlay().forEach((g, i) => {
+    const inp = document.createElement("input"); inp.type = "text"; inp.value = g.name; inp.size = 12;
+    inp.onchange = () => { S.groups[i].name = inp.value.trim() || ("Group " + (i + 1)); save(); renderSetup(); };
+    ni.appendChild(inp);
+  });
+  const dv = $("dealView"); dv.innerHTML = "";
+  const letters = S.n === 4 ? ["A", "B", "D", "E"] : ["A", "B", "C", "D", "E"];
+  groupsInPlay().forEach((g, i) => {
+    const d = document.createElement("div"); d.className = "slot";
+    const sel = document.createElement("select");
+    sel.innerHTML = '<option value="">— card —</option>' + letters.map(l => `<option value="${l}">${l}: ${CARDS[l].student}</option>`).join("");
+    sel.value = g.card || "";
+    sel.onchange = () => { S.groups[i].card = sel.value || null; save(); renderSetup(); };
+    d.innerHTML = `<b>${esc(g.name)}</b><br>`;
+    d.appendChild(sel);
+    if (g.card) d.insertAdjacentHTML("beforeend", `<div class="note-sm" style="margin-top:6px">${esc(CARDS[g.card].blurb)}<br>Savings ${fmt(CARDS[g.card].savings)} · Year total ${fmt(yearTotal(CARDS[g.card]))}</div>`);
+    dv.appendChild(d);
+  });
+  const cards = groupsInPlay().map(g => g.card);
+  const ok = cards.every(Boolean) && new Set(cards).size === cards.length;
+  $("startBtn").disabled = !ok;
+  $("joinHelp").innerHTML = joinHelpHTML();
+}
+function joinHelpHTML() {
+  const url = joinURL();
+  const net = peerStatus === "ready";
+  let s = `Each group opens <b>${esc(url)}</b> on one phone or laptop and enters code <b style="color:var(--amber);font-size:22px;letter-spacing:.12em">${S.code}</b>.`;
+  if (location.protocol === "file:") s += `<br><br><span style="color:var(--red)">This file is open from your computer, so phones can't reach it. To use phone voting, put this file online (for example GitHub Pages) and open it from there.</span> You can still test phone voting on this computer: open this same file in a second tab and add <b>?join</b> to the end of the address.`;
+  else if (!net) s += `<br><br><span style="color:var(--red)">Phone connection service: ${esc(peerStatus)}.</span> You can still play by clicking each group's choice on the board.`;
+  s += `<br><br>No phones? No problem: you can click each group's choice on the board.`;
+  return s;
+}
+
+function renderGame() {
+  const info = ROUND_INFO[S.round];
+  const st = curStep();
+  $("roundLabel").textContent = `Round ${S.round} of 6 · ${info.months}`;
+  $("roundTitle").textContent = info.title;
+  $("joinBox").innerHTML = `Join: <span style="color:var(--text)">${esc(shortURL())}</span><br>Code <b>${S.code}</b>`;
+
+  // event bar
+  let q = "";
+  if (st && st.type === "vote") q = `<div class="q">❓ ${esc(st.question)}</div>`;
+  if (st && st.type === "roll") q = `<div class="q">🎲 ${esc(st.label)}</div>`;
+  $("eventBar").innerHTML = `${esc(info.text)}${q}`;
+
+  // footer
+  let label = "";
+  const nb = $("nextBtn");
+  nb.disabled = !!S.rolling || S.phase === "vote-timer";
+  if (S.phase === "intro") { label = "Read the event aloud."; nb.textContent = "Start round ▶"; }
+  else if (S.phase === "roll-ready") { label = st.label; nb.textContent = "🎲 Roll"; }
+  else if (S.rolling) { label = "Rolling…"; nb.textContent = "Rolling…"; }
+  else if (S.phase === "vote-ready") { label = "Groups: talk it over. Voting opens after 30 seconds."; nb.textContent = "Start 30-second timer ▶"; }
+  else if (S.phase === "vote-timer") { label = "Thinking time… voting opens when the timer ends."; nb.textContent = "Thinking…"; }
+  else if (S.phase === "vote-open") {
+    const n = voters().length, a = Object.keys(S.vote.answers).length;
+    label = `Voting open: ${a} of ${n} groups answered. Answers stay hidden until the reveal.`; nb.textContent = "Reveal answers ▶";
+  }
+  else if (S.phase === "vote-revealed") { label = "Answers revealed. Fix any mistakes, then apply."; nb.textContent = "Apply choices ▶"; }
+  else if (st) { label = "Done: " + st.label; nb.textContent = (S.step >= curSteps().length - 1) ? (S.round >= 6 ? "Final scores ▶" : "Next round ▶") : "Next ▶"; }
+  $("stepLabel").textContent = label;
+  $("undoBtn").disabled = !undoStack.length || !!S.rolling;
+  $("addTimeBtn").classList.toggle("hidden", S.phase !== "vote-timer");
+  $("skipTimerBtn").classList.toggle("hidden", S.phase !== "vote-timer");
+  $("timer").classList.toggle("hidden", !(S.phase === "vote-timer" || S.phase === "vote-open"));
+  renderTimer();
+
+  // board
+  const showAnswers = S.vote && (S.phase === "vote-open" || S.phase === "vote-revealed");
+  let h = `<table><tr><th>Group</th><th>Getting around</th><th>Cash</th><th>Strikes</th><th>${S.rolling || (st && st.type === "roll") ? "Die" : ""}</th><th>${showAnswers ? "Answer" : "This round"}</th></tr>`;
+  for (const g of groupsInPlay()) {
+    const c = card(g);
+    const t = g.mode ? TRANSPORT[g.mode] : null;
+    const tags = [];
+    if (g.mode && isCar(g)) tags.push(g.insurance === "min" ? "min. insurance" : "full insurance");
+    if (g.rideshare) tags.push("rideshare to work");
+    if (g.deadLoan) tags.push("paying for a dead car");
+    if (g.patched) tags.push("patched transmission");
+    let tagHTML = tags.map(x => `<span class="tag">${esc(x)}</span>`).join("");
+    if (g.debt) tagHTML += `<span class="tag loan">payday loan: owe ${fmt(g.debt)}</span>`;
+    if (g.out) tagHTML += `<span class="tag outtag">OUT: ${esc(g.outWhy)}</span>`;
+
+    // die cell
+    let die = "";
+    if (st && st.type === "roll") {
+      const rolled = g.roll[st.id];
+      const involved = active(g) && st.who(g);
+      if (S.rolling && S.rolling.current === g.id) die = `<span class="die rolling" data-spin="1">${1 + Math.floor(Math.random() * 6)}</span>`;
+      else if (rolled) die = `<span class="die ${st.bad(rolled, g) ? "bad" : "ok"}">${rolled}</span>`;
+      else if (involved) die = `<span class="die idle">…</span>`;
+    }
+
+    // answer / notes cell
+    let right = "";
+    if (showAnswers && active(g) && curStep().who(g)) {
+      const ans = S.vote.answers[g.id];
+      const opts = curStep().options(g);
+      if (S.phase === "vote-open") {
+        right = `<div class="answer">${ans ? '<span class="done">✓ Answered</span>' : '<span class="pending">Waiting…</span>'}</div>`;
+        right += `<div class="opts">${opts.map((o, i) => `<button data-g="${g.id}" data-k="${o.key}" ${o.disabled ? "disabled title='" + esc(o.why || "") + "'" : ""}>${i + 1}</button>`).join("")}<span class="note-sm" style="align-self:center">host: pick for this group</span></div>`;
+      } else {
+        const o = opts.find(x => x.key === ans);
+        right = `<div class="answer"><span class="chosen">${o ? esc(o.label) : "— no answer —"}</span></div>`;
+        right += `<div class="opts">${opts.map((o, i) => `<button class="${o.key === ans ? "sel" : ""}" data-g="${g.id}" data-k="${o.key}" ${o.disabled ? "disabled" : ""}>${i + 1}. ${esc(o.label)}</button>`).join("")}</div>`;
+      }
+    } else {
+      right = `<div class="notes">${g.notes.slice(-4).map(n => `<div class="${n.kind}">${esc(n.text)}</div>`).join("")}</div>`;
+    }
+
+    h += `<tr class="${g.out ? "out" : ""}">
+      <td><div class="gname">${esc(g.name)}</div><div class="student">${g.card}: ${esc(c.student)} · year total ${fmt(yearTotal(c))}</div></td>
+      <td>${t ? t.icon + " " + esc(t.label) : '<span class="student">choosing…</span>'}<div>${tagHTML}</div></td>
+      <td class="cash ${g.cash < 0 ? "neg" : ""}">${fmt(g.cash)}</td>
+      <td class="strikes">${[0, 1, 2].map(i => `<span class="${i < g.strikes ? "on" : ""}"></span>`).join("")}</td>
+      <td>${die}</td>
+      <td>${right}</td></tr>`;
+  }
+  h += "</table>";
+  if (S.phase === "vote-open" || S.phase === "vote-revealed") {
+    // show the option list once, for the room
+    const lists = {};
+    for (const g of voters()) { const k = curStep().options(g).map(o => o.label).join(" | "); (lists[k] = lists[k] || []).push(g.name); }
+    h += `<div class="card" style="font-size:18px">${Object.entries(lists).map(([k, names]) => `<div style="margin:6px 0"><b>${esc(names.join(", "))}:</b> ${k.split(" | ").map((x, i) => `<span class="tag">${i + 1}. ${esc(x)}</span>`).join(" ")}</div>`).join("")}</div>`;
+  }
+  $("board").innerHTML = h;
+  $("board").querySelectorAll("button[data-g]").forEach(b => b.onclick = () => {
+    const gid = b.dataset.g, k = b.dataset.k;
+    if (S.phase === "vote-revealed") { snapshot(); S.vote.answers[gid] = k; save(); render(); }
+    else setAnswer(gid, k, false);
+  });
+  // spin animation for the rolling die
+  const spin = $("board").querySelector("[data-spin]");
+  if (spin) { const iv = setInterval(() => { if (!document.body.contains(spin)) return clearInterval(iv); spin.textContent = 1 + Math.floor(Math.random() * 6); }, 80); }
+}
+function renderTimer() {
+  const el = $("timer");
+  if (S.phase === "vote-timer") { el.classList.remove("done"); el.textContent = Math.max(0, Math.ceil((S.vote.timerEnd - Date.now()) / 1000)); }
+  else if (S.phase === "vote-open") { el.classList.add("done"); el.textContent = "GO"; }
+  broadcastTimerOnly();
+}
+
+function renderFinal() {
+  const gs = groupsInPlay().slice().sort((a, b) => (b.out ? -1 : 0) - (a.out ? -1 : 0) || score(b) - score(a) || a.strikes - b.strikes);
+  const winner = gs.find(g => !g.out);
+  let h = `<table class="rank"><tr><th>#</th><th>Group</th><th>Score</th><th>Strikes</th><th class="${S.revealDollars ? "" : "hidden"}">Cash + car value</th><th class="${S.revealDollars ? "" : "hidden"}">Started the year with</th></tr>`;
+  gs.forEach((g, i) => {
+    h += `<tr class="${g === winner ? "winner" : ""} ${g.out ? "out" : ""}">
+      <td>${g.out ? "–" : i + 1}</td>
+      <td><div class="gname">${esc(g.name)}</div><div class="student">${g.card}: ${esc(card(g).student)}${g.out ? " · OUT: " + esc(g.outWhy) : ""}</div></td>
+      <td class="pct">${g.out ? "OUT" : Math.round(score(g) * 100) + "%"}</td>
+      <td class="strikes">${[0, 1, 2].map(k => `<span class="${k < g.strikes ? "on" : ""}"></span>`).join("")}</td>
+      <td class="${S.revealDollars ? "" : "hidden"} cash">${fmt(g.cash + carValue(g))}</td>
+      <td class="${S.revealDollars ? "" : "hidden"}">${fmt(yearTotal(card(g)))}</td></tr>`;
+  });
+  $("finalTable").innerHTML = h + "</table>";
+  $("revealDollarsBtn").classList.toggle("hidden", S.revealDollars);
+}
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+/* =====================================================================
+   PHONE CONNECTIONS
+   Two transports, used together:
+   - PeerJS (over the internet) when the page is hosted online
+   - BroadcastChannel (same computer, other tabs) for testing/practice
+   ===================================================================== */
+let MODE = new URLSearchParams(location.search).has("join") ? "phone" : "host";
+let peer = null, peerStatus = "connecting…", conns = [];
+let bc = null;
+function joinURL() { return location.origin === "null" ? location.href.split("?")[0] + "?join" : location.origin + location.pathname + "?join"; }
+function shortURL() { return joinURL().replace(/^https?:\/\//, ""); }
+
+// PeerJS loads in the background so a slow or offline network never blocks the game
+function loadPeer(cb) {
+  let done = false; const once = () => { if (!done) { done = true; cb(); } };
+  if (typeof Peer !== "undefined" || location.protocol === "file:") return once();
+  const s = document.createElement("script");
+  s.src = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
+  s.onload = once; s.onerror = once; document.head.appendChild(s);
+  setTimeout(once, 8000);
+}
+function hostConnect() {
+  try { bc = new BroadcastChannel("caryear-" + S.code); bc.onmessage = e => onPhoneMsg(e.data, m => bc.postMessage(m)); } catch (e) {}
+  loadPeer(hostPeer);
+}
+function hostPeer() {
+  if (typeof Peer === "undefined") { peerStatus = "not available (offline?)"; render(); return; }
+  if (location.protocol === "file:") { peerStatus = "not available from a local file"; return; }
+  try {
+    peer = new Peer("caryear-" + S.code.toLowerCase());
+    peer.on("open", () => { peerStatus = "ready"; render(); });
+    peer.on("error", err => { peerStatus = "error: " + (err && err.type || err); render(); });
+    peer.on("connection", c => {
+      conns.push(c);
+      c.on("data", d => onPhoneMsg(d, m => { try { c.send(m); } catch (e) {} }));
+      c.on("close", () => { conns = conns.filter(x => x !== c); });
+    });
+  } catch (e) { peerStatus = "error"; }
+}
+function onPhoneMsg(m, reply) {
+  if (!m || m.code !== S.code) return;
+  if (m.t === "hello") reply({ t: "lobby", code: S.code, groups: groupsInPlay().map(g => ({ id: g.id, name: g.name })) });
+  if (m.t === "vote") { setAnswer(m.gid, m.key, true); }
+  broadcast();
+}
+function phoneView(g) {
+  const st = curStep();
+  const v = { t: "view", code: S.code, gid: g.id, name: g.name, student: g.card ? card(g).student : "", cash: g.cash, strikes: g.strikes,
+    out: g.out, outWhy: g.outWhy, screen: S.screen, round: S.round,
+    title: S.round ? ROUND_INFO[S.round].title : "", event: S.round ? ROUND_INFO[S.round].text : "",
+    transport: g.mode ? TRANSPORT[g.mode].label : "", phase: S.phase, debt: g.debt };
+  if (st && st.type === "vote" && S.vote && active(g) && st.who(g)) {
+    v.voteId = S.vote.id; v.question = st.question;
+    v.options = st.options(g).map(o => ({ key: o.key, label: o.label, disabled: !!o.disabled, why: o.why || "" }));
+    v.answer = S.vote.answers[g.id] || null;
+    v.timerEnd = S.vote.timerEnd; v.now = Date.now();
+  }
+  if (S.screen === "final") { v.score = Math.round(score(g) * 100); }
+  return v;
+}
+function sendAll(m) {
+  if (bc) try { bc.postMessage(m); } catch (e) {}
+  for (const c of conns) try { c.send(m); } catch (e) {}
+}
+function broadcast() {
+  if (MODE !== "host" || !S) return;
+  for (const g of groupsInPlay()) sendAll(phoneView(g));
+}
+let lastTimerSend = 0;
+function broadcastTimerOnly() { if (Date.now() - lastTimerSend > 900) { lastTimerSend = Date.now(); broadcast(); } }
+
+/* ---------- PHONE PAGE ---------- */
+const P = { code: "", gid: null, view: null, lobby: null, conn: null, bc: null, status: "" };
+function phoneStart() {
+  $("phone").classList.remove("hidden");
+  P.code = (new URLSearchParams(location.search).get("code") || "").toUpperCase();
+  phoneRender();
+}
+function phoneSend(m) {
+  m.code = P.code;
+  if (P.bc) try { P.bc.postMessage(m); } catch (e) {}
+  if (P.conn && P.conn.open) try { P.conn.send(m); } catch (e) {}
+}
+function phoneJoin(code) {
+  P.code = code.toUpperCase().trim(); P.status = "Connecting…"; phoneRender();
+  const onMsg = m => {
+    if (!m || m.code !== P.code) return;
+    if (m.t === "lobby") { P.lobby = m.groups; P.status = ""; phoneRender(); }
+    if (m.t === "view" && m.gid === P.gid) { P.view = m; P.skew = m.now ? Date.now() - m.now : 0; phoneRender(); }
+  };
+  try { P.bc = new BroadcastChannel("caryear-" + P.code); P.bc.onmessage = e => onMsg(e.data); } catch (e) {}
+  phoneSend({ t: "hello" });
+  loadPeer(phonePeer);
+  setTimeout(() => { if (!P.lobby) phoneSend({ t: "hello" }); }, 1500);
+}
+function phonePeer() {
+  const onMsg = m => {
+    if (!m || m.code !== P.code) return;
+    if (m.t === "lobby") { P.lobby = m.groups; P.status = ""; phoneRender(); }
+    if (m.t === "view" && m.gid === P.gid) { P.view = m; P.skew = m.now ? Date.now() - m.now : 0; phoneRender(); }
+  };
+  if (typeof Peer !== "undefined" && location.protocol !== "file:") {
+    const me = new Peer();
+    me.on("open", () => {
+      P.conn = me.connect("caryear-" + P.code.toLowerCase(), { reliable: true });
+      P.conn.on("open", () => phoneSend({ t: "hello" }));
+      P.conn.on("data", onMsg);
+      P.conn.on("close", () => { P.status = "Disconnected. Refresh to reconnect."; phoneRender(); });
+    });
+    me.on("error", () => { if (!P.lobby) { P.status = "Couldn't reach the game. Check the code and try again."; phoneRender(); } });
+  }
+}
+let phoneTick = null;
+function phoneRender() {
+  const el = $("phone");
+  if (!P.lobby) {
+    el.innerHTML = `<h2>The Car Year Game</h2><p class="pwait">Enter the code on the big screen</p>
+      <div class="row"><input id="pcode" type="text" maxlength="4" value="${esc(P.code)}" style="font-size:32px;width:160px;text-transform:uppercase;letter-spacing:.2em">
+      <button class="btn primary" id="pjoin">Join</button></div><p class="note-sm">${esc(P.status)}</p>`;
+    $("pjoin").onclick = () => phoneJoin($("pcode").value);
+    return;
+  }
+  if (!P.gid) {
+    el.innerHTML = `<h2>Which group are you?</h2>` + P.lobby.map(g => `<button class="pbtn" data-g="${g.id}">${esc(g.name)}</button>`).join("");
+    el.querySelectorAll("[data-g]").forEach(b => b.onclick = () => { P.gid = b.dataset.g; phoneSend({ t: "hello" }); phoneRender(); });
+    return;
+  }
+  const v = P.view;
+  if (!v) { el.innerHTML = `<p class="pwait">Waiting for the game…</p>`; return; }
+  let h = `<h2>${esc(v.name)}</h2><div class="note-sm">${esc(v.student)}${v.transport ? " · " + esc(v.transport) : ""}</div>
+    <div class="pstat"><div><div class="v">${fmt(v.cash)}</div><div class="l">Cash</div></div>
+    <div><div class="v">${v.strikes} / 3</div><div class="l">Strikes</div></div></div>`;
+  if (v.debt) h += `<p class="note-sm">Payday loan: you owe ${fmt(v.debt)} next round.</p>`;
+  if (v.out) h += `<div class="pwait">You're out: ${esc(v.outWhy)}.<br>Stay ready to tell the class what happened.</div>`;
+  else if (v.screen === "final") h += `<div class="pbig">${v.score}%</div><p class="pwait">Final score. Look at the big screen!</p>`;
+  else if (v.question) {
+    h += `<div class="note-sm">Round ${v.round}: ${esc(v.title)}</div><div class="pq">${esc(v.question)}</div>`;
+    if (v.phase === "vote-ready") h += `<p class="pwait">Talk it over. Voting opens after the 30-second timer.</p>`;
+    else if (v.phase === "vote-timer") h += `<div class="pbig" id="pt">${Math.max(0, Math.ceil((v.timerEnd - (Date.now() - (P.skew || 0))) / 1000))}</div><p class="pwait">Think… voting opens soon.</p>`;
+    if (v.phase === "vote-open" || v.phase === "vote-timer" || v.phase === "vote-ready") {
+      const locked = v.phase !== "vote-open" || !!v.answer;
+      h += v.options.map((o, i) => `<button class="pbtn ${v.answer === o.key ? "sel" : ""}" data-k="${o.key}" ${locked || o.disabled ? "disabled" : ""}><span class="n">${i + 1}</span>${esc(o.label)}${o.disabled ? ` <span class="note-sm">(${esc(o.why)})</span>` : ""}</button>`).join("");
+      if (v.answer) h += `<p class="pwait">✓ Locked in. Wait for the reveal.</p>`;
+    }
+    if (v.phase === "vote-revealed") { const o = v.options.find(x => x.key === v.answer); h += `<p class="pwait">Revealed: <b>${o ? esc(o.label) : "no answer"}</b></p>`; }
+  } else {
+    h += `<div class="note-sm">${v.round ? "Round " + v.round + ": " + esc(v.title) : ""}</div><p class="pwait">${v.screen === "setup" ? "You're in! Waiting for the game to start." : "Watch the big screen."}</p>`;
+  }
+  el.innerHTML = h;
+  el.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => { phoneSend({ t: "vote", gid: P.gid, key: b.dataset.k }); });
+  clearInterval(phoneTick);
+  if (v.phase === "vote-timer") phoneTick = setInterval(() => { const t = $("pt"); if (t) t.textContent = Math.max(0, Math.ceil((v.timerEnd - (Date.now() - (P.skew || 0))) / 1000)); }, 250);
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+function boot() {
+  if (MODE === "phone") { phoneStart(); return; }
+  S = load() || freshState();
+  if (S.screen === "setup") $("resumeNote").textContent = "";
+  else $("resumeNote").textContent = "";
+  hostConnect();
+  // a refresh mid-roll or mid-timer resumes safely
+  if (S.rolling) { S.rolling = null; S.phase = "roll-ready"; }
+  if (S.phase === "vote-timer") tickTimer();
+
+  $("nGroups").onchange = () => { S.n = +$("nGroups").value; groupsInPlay().forEach(g => g.card = null); save(); renderSetup(); };
+  $("dealBtn").onclick = () => {
+    const letters = S.n === 4 ? ["A", "B", "D", "E"] : ["A", "B", "C", "D", "E"];
+    for (let i = letters.length - 1; i > 0; i--) { const j = d6() % (i + 1); [letters[i], letters[j]] = [letters[j], letters[i]]; }
+    groupsInPlay().forEach((g, i) => g.card = letters[i]); save(); renderSetup();
+  };
+  $("startBtn").onclick = startGame;
+  $("nextBtn").onclick = next;
+  $("undoBtn").onclick = undo;
+  $("skipTimerBtn").onclick = skipTimer;
+  $("addTimeBtn").onclick = addTime;
+  $("revealDollarsBtn").onclick = () => { S.revealDollars = true; save(); render(); };
+  $("backToBoardBtn").onclick = () => { S.screen = "game"; save(); render(); };
+  $("newGameBtn").onclick = () => { if (confirm("Start a new game? This erases the current one.")) { const code = S.code; S = freshState(); S.code = code; undoStack = []; save(); render(); } };
+  document.addEventListener("keydown", e => { if (e.code === "Space" && S.screen === "game" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); next(); } });
+  render();
+}
+window.__game = { get S() { return S; }, next, setAnswer, undo, ROUNDS, CARDS, TRANSPORT, score, carValue };
+boot();
+</script>
+</body>
+</html>
