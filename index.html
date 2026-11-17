@@ -478,7 +478,7 @@ const curStep = () => curSteps()[S.step];
    FLOW
    ===================================================================== */
 function startGame() {
-  snapshot();
+  undoStack = [];                     // nothing before the first round can be undone
   for (const g of groupsInPlay()) { g.cash = CARDS[g.card].savings; }
   S.screen = "game"; S.round = 1; S.step = -1; S.phase = "intro";
   groupsInPlay().forEach(g => { g.notes = []; g.roll = {}; g.choice = {}; });
@@ -593,6 +593,7 @@ function setAnswer(gid, key, fromPhone) {
   if (!g || !active(g) || !st.who(g)) return false;
   const opt = st.options(g).find(o => o.key === key);
   if (!opt || opt.disabled) return false;
+  if (fromPhone && S.vote.answers[gid]) return S.vote.answers[gid] === key;   // first phone answer wins; the host can still change it
   S.vote.answers[gid] = key; save();
   // reveal automatically when everyone has answered from their phones
   if (fromPhone && voters().every(v => S.vote.answers[v.id])) { revealVotes(); return true; }
@@ -905,7 +906,9 @@ function makeLink(code, subTopic, onMsg, onStatus) {
 
 /* ---------- host side ---------- */
 let hostLink = null;
-const phoneSeen = {};                 // gid -> last time we heard from that group's device
+const devices = {};                   // deviceId -> { gid, at }: each phone counts once, for the group it's on now
+const phoneSeen = {};                 // gid -> last time any device on that group was heard (derived)
+function devicesOn(gid) { const now = Date.now(); return Object.values(devices).filter(d => d.gid === gid && now - d.at < 25000).length; }
 let heartbeat = null;
 function hostConnect() {
   if (hostLink) hostLink.close();
@@ -929,10 +932,16 @@ function restartGame() {
   S.n = n; S.groups.forEach((g, i) => { g.name = names[i]; });
   undoStack = [];
   for (const k in phoneSeen) delete phoneSeen[k];
+  for (const k in devices) delete devices[k];
   save(); hostConnect(); render();
 }
 function onPhoneMsg(m) {
-  if (m.gid) phoneSeen[m.gid] = Date.now();
+  if (m.dev) {
+    if (m.t === "bye" || !m.gid) delete devices[m.dev];
+    else devices[m.dev] = { gid: m.gid, at: Date.now() };
+    for (const k in phoneSeen) delete phoneSeen[k];
+    for (const d of Object.values(devices)) if (Date.now() - d.at < 25000) phoneSeen[d.gid] = Math.max(phoneSeen[d.gid] || 0, d.at);
+  }
   if (m.t === "vote" && S.vote && m.vid === voteKey()) setAnswer(m.gid, m.key, true);
   else if (m.t === "hello") publishState();
   renderNet();
@@ -959,7 +968,7 @@ function publishState() {
   if (MODE !== "host" || !S || !hostLink) return;
   const views = {}; for (const g of groupsInPlay()) views[g.id] = phoneView(g);
   hostLink.send("state", { t: "state", sent: Date.now(), seq: ++pubSeq,
-    lobby: groupsInPlay().map(g => ({ id: g.id, name: g.name })), views }, true);
+    lobby: groupsInPlay().map(g => ({ id: g.id, name: g.name, taken: devicesOn(g.id) })), views }, true);
 }
 function broadcast() { clearTimeout(pubTimer); pubTimer = setTimeout(publishState, 120); }
 function broadcastTimerOnly() {}
@@ -967,7 +976,7 @@ function netSummary() {
   if (!hostLink) return { relays: 0, total: RELAYS.length, phones: 0 };
   const now = Date.now();
   return { relays: hostLink.connectedCount(), total: RELAYS.length,
-    phones: groupsInPlay().filter(g => phoneSeen[g.id] && now - phoneSeen[g.id] < 25000).length };
+    phones: groupsInPlay().filter(g => devicesOn(g.id) > 0).length };
 }
 function renderNet() {
   if (MODE !== "host" || !S) return;
@@ -976,17 +985,20 @@ function renderNet() {
   if (el) el.innerHTML = `<span style="color:${n.relays ? "var(--green)" : "var(--yellow)"}">● relays ${n.relays}/${n.total}</span> · 📱 ${n.phones}/${S.n} groups`;
   if (S.screen === "setup") { const j = $("joinHelp"); if (j) j.innerHTML = joinHelpHTML(); }
   document.querySelectorAll("[data-phone]").forEach(e => {
-    const t = phoneSeen[e.dataset.phone]; e.textContent = t && Date.now() - t < 25000 ? "📱" : "";
+    const n = devicesOn(e.dataset.phone); e.textContent = n > 1 ? "📱×" + n : n ? "📱" : "";
   });
 }
 
 /* ---------- PHONE PAGE ---------- */
 const P = { code: "", gid: null, view: null, lobby: null, link: null, status: "", lastSeq: 0, lastSent: 0, gotAt: 0, startedAt: 0, pending: null };
+const PHONE_KEY = "caryear-phone" + (new URLSearchParams(location.search).get("p") || "");
+P.dev = (() => { try { let d = sessionStorage.getItem(PHONE_KEY + "-dev"); if (!d) { d = "d" + Math.random().toString(36).slice(2, 12); sessionStorage.setItem(PHONE_KEY + "-dev", d); } return d; } catch (e) { return "d" + Math.random().toString(36).slice(2, 12); } })();
+function phoneUp(m) { if (P.link) { m.dev = P.dev; P.link.send("up", m); } }
 function phoneStart() {
   $("phone").classList.remove("hidden");
   P.code = (new URLSearchParams(location.search).get("code") || "").toUpperCase();
   setInterval(phoneHeartbeat, 1000);
-  try { const saved = JSON.parse(sessionStorage.getItem("caryear-phone") || "null"); if (saved) { P.code = saved.code; P.gid = saved.gid; phoneJoin(P.code); return; } } catch (e) {}
+  try { const saved = JSON.parse(sessionStorage.getItem(PHONE_KEY) || "null"); if (saved) { P.code = saved.code; P.gid = saved.gid; phoneJoin(P.code); return; } } catch (e) {}
   phoneRender();
 }
 function phoneJoin(code) {
@@ -995,7 +1007,7 @@ function phoneJoin(code) {
   if (P.link) P.link.close();
   P.code = code; P.lobby = null; P.view = null; P.lastSeq = 0; P.lastSent = 0; P.startedAt = Date.now(); P.status = "";
   P.link = makeLink(code, "state", onHostState, () => phoneRender());
-  P.link.send("up", { t: "hello", gid: P.gid });
+  phoneUp({ t: "hello", gid: P.gid });
   phoneRender();
 }
 function onHostState(m) {
@@ -1003,7 +1015,7 @@ function onHostState(m) {
   if (m.sent < P.lastSent || (m.sent === P.lastSent && m.seq <= P.lastSeq)) return;   // same update via another relay
   if (m.closed) {                      // the host restarted: back to the join screen
     const code = P.code;
-    try { sessionStorage.removeItem("caryear-phone"); } catch (e) {}
+    try { sessionStorage.removeItem(PHONE_KEY); } catch (e) {}
     if (P.link) P.link.close();
     Object.assign(P, { link: null, gid: null, lobby: null, view: null, pending: null, lastSeq: 0, lastSent: 0, gotAt: 0, code: "",
       status: "Game " + code + " has ended. Enter the new code from the big screen. " });
@@ -1013,15 +1025,16 @@ function onHostState(m) {
   P.lobby = m.lobby;
   if (P.gid && !m.lobby.some(g => g.id === P.gid)) P.gid = null;
   P.view = P.gid ? m.views[P.gid] : null;
-  if (P.pending && P.view && (P.view.answer === P.pending.key || P.view.vid !== P.pending.vid || P.view.phase !== "vote-open")) P.pending = null;
+  if (P.pending && (P.pending.gid !== P.gid || (P.view && (P.view.answer || P.view.vid !== P.pending.vid || P.view.phase !== "vote-open")))) P.pending = null;
   phoneRender();
 }
 let lastHello = 0;
 function phoneHeartbeat() {
   if (!P.link) { return; }
   const now = Date.now();
-  if (P.gid && now - lastHello > 8000) { lastHello = now; P.link.send("up", { t: "hello", gid: P.gid }); }
-  if (P.pending && now - P.pending.at > 2000) { P.pending.at = now; P.link.send("up", { t: "vote", gid: P.gid, key: P.pending.key, vid: P.pending.vid }); }
+  if (P.gid && now - lastHello > 8000) { lastHello = now; phoneUp({ t: "hello", gid: P.gid }); }
+  if (P.pending && P.pending.gid !== P.gid) P.pending = null;          // never resend a vote for a different group
+  if (P.pending && now - P.pending.at > 2000) { P.pending.at = now; phoneUp({ t: "vote", gid: P.pending.gid, key: P.pending.key, vid: P.pending.vid }); }
   if (!P.lobby || (P.gotAt && now - P.gotAt > 15000)) phoneRender();
 }
 function phoneStatusHTML() {
@@ -1048,10 +1061,11 @@ function phoneRender() {
     return;
   }
   if (!P.gid) {
-    el.innerHTML = `<h2>Which group are you?</h2><p class="note-sm">Game ${esc(P.code)}</p>` + P.lobby.map(g => `<button class="pbtn" data-g="${g.id}">${esc(g.name)}</button>`).join("");
+    el.innerHTML = `<h2>Which group are you?</h2><p class="note-sm">Game ${esc(P.code)}. Pick your own group; one device per group.</p>` +
+      P.lobby.map(g => `<button class="pbtn" data-g="${g.id}">${esc(g.name)}${g.taken ? ' <span class="note-sm">(a device already joined)</span>' : ""}</button>`).join("");
     el.querySelectorAll("[data-g]").forEach(b => b.onclick = () => {
-      P.gid = b.dataset.g; try { sessionStorage.setItem("caryear-phone", JSON.stringify({ code: P.code, gid: P.gid })); } catch (e) {}
-      P.link.send("up", { t: "hello", gid: P.gid }); P.view = null; phoneRender();
+      P.gid = b.dataset.g; P.pending = null; try { sessionStorage.setItem(PHONE_KEY, JSON.stringify({ code: P.code, gid: P.gid })); } catch (e) {}
+      phoneUp({ t: "hello", gid: P.gid }); P.view = null; phoneRender();
     });
     return;
   }
@@ -1082,11 +1096,12 @@ function phoneRender() {
   }
   el.innerHTML = h;
   el.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
-    P.pending = { key: b.dataset.k, vid: v.vid, at: Date.now() };
-    P.link.send("up", { t: "vote", gid: P.gid, key: b.dataset.k, vid: v.vid });
+    if (P.pending || v.answer) return;                                       // one tap only
+    P.pending = { gid: P.gid, key: b.dataset.k, vid: v.vid, at: Date.now() };
+    phoneUp({ t: "vote", gid: P.gid, key: b.dataset.k, vid: v.vid });
     phoneRender();
   });
-  const sw = $("pswitch"); if (sw) sw.onclick = e => { e.preventDefault(); P.gid = null; try { sessionStorage.removeItem("caryear-phone"); } catch (x) {} phoneRender(); };
+  const sw = $("pswitch"); if (sw) sw.onclick = e => { e.preventDefault(); phoneUp({ t: "bye" }); P.gid = null; P.pending = null; P.view = null; try { sessionStorage.removeItem(PHONE_KEY); } catch (x) {} phoneRender(); };
   clearInterval(phoneTick);
   if (v.phase === "vote-timer") phoneTick = setInterval(() => { const t = $("pt"); if (t) t.textContent = Math.max(0, Math.ceil((v.timerEnd - (Date.now() - (P.skew || 0))) / 1000)); }, 250);
 }
