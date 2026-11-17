@@ -802,6 +802,7 @@ function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<"
    the same computer, for practice.
    ===================================================================== */
 let MODE = new URLSearchParams(location.search).has("join") ? "phone" : "host";
+const GAME_VERSION = "2026-11-17a";   // bump on every update: phones running an older cached copy reload themselves
 const DEFAULT_RELAYS = [
   "wss://broker.emqx.io:8084/mqtt",
   "wss://broker.hivemq.com:8884/mqtt",
@@ -967,7 +968,7 @@ let pubTimer = null, pubSeq = 0;
 function publishState() {
   if (MODE !== "host" || !S || !hostLink) return;
   const views = {}; for (const g of groupsInPlay()) views[g.id] = phoneView(g);
-  hostLink.send("state", { t: "state", sent: Date.now(), seq: ++pubSeq,
+  hostLink.send("state", { t: "state", v: GAME_VERSION, sent: Date.now(), seq: ++pubSeq,
     lobby: groupsInPlay().map(g => ({ id: g.id, name: g.name, taken: devicesOn(g.id) })), views }, true);
 }
 function broadcast() { clearTimeout(pubTimer); pubTimer = setTimeout(publishState, 120); }
@@ -999,6 +1000,7 @@ function phoneStart() {
   P.code = (new URLSearchParams(location.search).get("code") || "").toUpperCase();
   setInterval(phoneHeartbeat, 1000);
   try { const saved = JSON.parse(sessionStorage.getItem(PHONE_KEY) || "null"); if (saved) { P.code = saved.code; P.gid = saved.gid; phoneJoin(P.code); return; } } catch (e) {}
+  if (/^[A-Z]{4}$/.test(P.code)) { phoneJoin(P.code); return; }    // e.g. after an automatic reload
   phoneRender();
 }
 function phoneJoin(code) {
@@ -1012,6 +1014,14 @@ function phoneJoin(code) {
 }
 function onHostState(m) {
   if (m.t !== "state") return;
+  if (m.v && m.v !== GAME_VERSION) {                 // this phone has an old cached copy of the game: fetch the current one
+    let tried = null; try { tried = sessionStorage.getItem("caryear-reload"); } catch (e) {}
+    if (tried !== m.v) {
+      try { sessionStorage.setItem("caryear-reload", m.v); } catch (e) {}
+      const q = new URLSearchParams(location.search); q.set("fresh", Date.now()); if (P.code) q.set("code", P.code);
+      location.replace(location.pathname + "?" + q.toString().replace(/^join=&?/, "join&")); return;
+    }
+  }
   if (m.sent < P.lastSent || (m.sent === P.lastSent && m.seq <= P.lastSeq)) return;   // same update via another relay
   if (m.closed) {                      // the host restarted: back to the join screen
     const code = P.code;
